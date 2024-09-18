@@ -1,23 +1,16 @@
 # weiboPicDownloader ![](https://img.shields.io/badge/python-2.7%7C3.4+-blue.svg)
 
-(not real) weibo user album batch download tool (CLI)
+原 repository: [nondanee/weiboPicDownloader](https://github.com/nondanee/weiboPicDownloader)
 
-build user album by picking all photos from original weibos in user's post feed
+修正了一些無法正常下載的問題。
 
-for more weibo free login APIs, turn to [wiki](https://github.com/nondanee/weiboPicDownloader/wiki)
+## 使用範例
 
-**[中文 README](README-CN.md)**
+將需要下載的用戶名存放於 `list.txt` 後，使用以下指令：
 
+`python weiboPicDownloader.py -d "D:\Pictures\Weibo" -n {date}_{name} -f list.txt -i 1 -s 15 -b 20230101:`
 
-## References
-
-[yAnXImIN/weiboPicDownloader](https://github.com/yAnXImIN/weiboPicDownloader)  
-
-[ningshu/weiboPicDownloader](https://github.com/ningshu/weiboPicDownloader) 
-
-## Overview
-
-![](https://user-images.githubusercontent.com/26399680/51592598-fd48b980-1f2a-11e9-9687-4670e7dfcd83.png)
+具體參數可參照 [Usage](##Usage)
 
 ## Dependencies
 
