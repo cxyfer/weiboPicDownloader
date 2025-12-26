@@ -88,16 +88,16 @@ optional arguments:
 
 ```bash
 # 通过超话名称下载
-python weiboPicDownloader.py -t 黄怡慈 -b 20251220:
+python weiboPicDownloader.py -t {超话名称} -b 20251220:
 
 # 通过 Container ID 下载
-python weiboPicDownloader.py -t 100808bb9cd1a4f4e71095340183c2c51749a2 -b 20251220:
+python weiboPicDownloader.py -t {container_id} -b 20251220:
 
 # 增加请求间隔以避免限流
-python weiboPicDownloader.py -t 黄怡慈 -b 20251220: -i 2
+python weiboPicDownloader.py -t {超话名称} -b 20251220: -i 2
 
 # 使用自定义 Cookie
-python weiboPicDownloader.py -t 黄怡慈 -c cookies.txt -b 20251220:
+python weiboPicDownloader.py -t {超话名称} -c cookies.txt -b 20251220:
 ```
 
 注意：超话图片将保存到 `topic/<超话名称>/` 文件夹中。

@@ -96,16 +96,16 @@ Notes:
 
 ```bash
 # Download by supertopic name (use Simplified Chinese)
-python weiboPicDownloader.py -t 黄怡慈 -b 20251220:
+python weiboPicDownloader.py -t {supertopic_name} -b 20251220:
 
 # Download by container ID
-python weiboPicDownloader.py -t 100808bb9cd1a4f4e71095340183c2c51749a2 -b 20251220:
+python weiboPicDownloader.py -t {container_id} -b 20251220:
 
 # With interval to avoid rate limiting
-python weiboPicDownloader.py -t 黄怡慈 -b 20251220: -i 2
+python weiboPicDownloader.py -t {supertopic_name} -b 20251220: -i 2
 
 # With custom cookie
-python weiboPicDownloader.py -t 黄怡慈 -c cookies.txt -b 20251220:
+python weiboPicDownloader.py -t {supertopic_name} -c cookies.txt -b 20251220:
 ```
 
 Note: Supertopic images will be saved to `topic/<supertopic_name>/` folder.
