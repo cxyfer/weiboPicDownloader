@@ -297,7 +297,6 @@ class WeiboScraper:
         while not finish and empty_count < 3 and (max_pages == 0 or page <= max_pages):
             # Use feed endpoint with page parameter
             url = f'https://m.weibo.cn/api/container/getIndex?containerid={containerid}_-_feed&page={page}'
-            print(f"Fetch from {url}")
             resp = self.request('GET', url)
             
             if not resp or resp.status_code != 200:
