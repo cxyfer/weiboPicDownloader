@@ -4,6 +4,8 @@
 
 build user album by picking all photos from original weibos in user's post feed
 
+**Now supports downloading images from Supertopics (超话)!**
+
 for more weibo free login APIs, turn to [wiki](https://github.com/nondanee/weiboPicDownloader/wiki)
 
 **[中文 README](README-CN.md)**
@@ -31,29 +33,31 @@ $ pip install futures # only python2 environment required
 
 ```
 $ python .\weiboPicDownloader.py -h
-usage: weiboPicDownloader [-h] (-u user [user ...] | -f file [file ...])
+usage: weiboPicDownloader [-h] (-u user [user ...] | -f file [file ...] | -t topic [topic ...])
                           [-d directory] [-s size] [-r retry] [-i interval]
                           [-c cookie] [-b boundary] [-n name] [-v] [-o]
 
 optional arguments:
-  -h, --help          show this help message and exit
-  -u user [user ...]  specify nickname or id of weibo users
-  -f file [file ...]  import list of users from files
-  -d directory        set picture saving path
-  -s size             set size of thread pool
-  -r retry            set maximum number of retries
-  -i interval         set interval for feed requests
-  -c cookie           set cookie or cookie file (file path preferred)
-  -b boundary         focus on weibos in the id range
-  -n name             customize naming format
-  -v                  download videos together
-  -o                  overwrite existing files
+  -h, --help            show this help message and exit
+  -u user [user ...]    specify nickname or id of weibo users
+  -f file [file ...]    import list of users from files
+  -t topic [topic ...]  specify supertopic name or container id (100808...)
+  -d directory          set picture saving path
+  -s size               set size of thread pool
+  -r retry              set maximum number of retries
+  -i interval           set interval for feed requests
+  -c cookie             set cookie or cookie file (file path preferred)
+  -b boundary           focus on weibos in the id range
+  -n name               customize naming format
+  -v                    download videos together
+  -o                    overwrite existing files
 ```
 
 Required argument (choose one)
 
 - `-u user ...` users (nickname or id)
 - `-f file ...` user list files (nickname or id, separated by linefeed in the file)
+- `-t topic ...` supertopic names or container IDs (e.g., `黄怡慈` or `100808bb9cd1a4f4e71095340183c2c51749a2`)
 
 Optional arguments
 
@@ -87,3 +91,21 @@ Notes:
 4. Provide via `-c`:
    - File: save cookies to `cookie.txt`, then `-c cookie.txt`
    - Raw: `-c "SUB=...; SUBP=...; XSRF-TOKEN=..."` or `-c "<SUB value>"`
+
+## Supertopic Download Examples
+
+```bash
+# Download by supertopic name (use Simplified Chinese)
+python weiboPicDownloader.py -t 黄怡慈 -b 20251220:
+
+# Download by container ID
+python weiboPicDownloader.py -t 100808bb9cd1a4f4e71095340183c2c51749a2 -b 20251220:
+
+# With interval to avoid rate limiting
+python weiboPicDownloader.py -t 黄怡慈 -b 20251220: -i 2
+
+# With custom cookie
+python weiboPicDownloader.py -t 黄怡慈 -c cookies.txt -b 20251220:
+```
+
+Note: Supertopic images will be saved to `topic/<supertopic_name>/` folder.
