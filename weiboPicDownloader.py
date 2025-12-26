@@ -1,450 +1,522 @@
 # -*- coding: utf-8 -*-
 
-from functools import reduce
-import sys, locale, platform
-import time, os, json, re, datetime, math, operator
+import sys
+import os
+import json
+import re
+import datetime
+import math
+import time
 import concurrent.futures
 import requests
 import argparse
+from urllib.parse import urlparse
+import traceback
+import logging
 
+logger = logging.getLogger(__name__)
+
+# Selenium imports
+HAS_SELENIUM = False
 try:
-	reload(sys)
-	sys.setdefaultencoding('utf8')
-except:
-	pass
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.chrome.service import Service
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from webdriver_manager.chrome import ChromeDriverManager
+    HAS_SELENIUM = True
+except ImportError:
+    pass
 
-is_python2 = sys.version[0] == '2'
-system_encoding = sys.stdin.encoding or locale.getpreferredencoding(True)
-
-if platform.system() == 'Windows':
-	if operator.ge(*map(lambda version: list(map(int, version.split('.'))), [platform.version(), '10.0.14393'])):
-		os.system('')
-	else:
-		import colorama
-		colorama.init()
-
+# Disable SSL warnings
 try:
-	requests.packages.urllib3.disable_warnings(requests.packages.urllib3.exceptions.InsecureRequestWarning)
-except:
-	pass
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+except ImportError:
+    pass
 
-parser = argparse.ArgumentParser(
-	prog = 'weiboPicDownloader'
-)
-group = parser.add_mutually_exclusive_group(required = True)
-group.add_argument(
-	'-u', metavar = 'user', dest = 'users', nargs = '+',
-	help = 'specify nickname or id of weibo users'
-)
-group.add_argument(
-	'-f', metavar = 'file', dest = 'files', nargs = '+',
-	help = 'import list of users from files'
-)
-parser.add_argument(
-	'-d', metavar = 'directory', dest = 'directory',
-	help = 'set picture saving path'
-)
-parser.add_argument(
-	'-s', metavar = 'size', dest = 'size',
-	default = 20, type = int,
-	help = 'set size of thread pool'
-)
-parser.add_argument(
-	'-r', metavar = 'retry', dest = 'retry',
-	default = 2, type = int,
-	help = 'set maximum number of retries'
-)
-parser.add_argument(
-	'-i', metavar = 'interval', dest = 'interval',
-	default = 1, type = float,
-	help = 'set interval for feed requests'
-)
-parser.add_argument(
-	'-c', metavar = 'cookie', dest = 'cookie',
-	help = 'set cookie if needed'
-)
-parser.add_argument(
-	'-b', metavar = 'boundary', dest = 'boundary',
-	default = ':',
-	help = 'focus on weibos in the id range'
-)
-parser.add_argument(
-	'-n', metavar = 'name', dest = 'name', default = '{name}',
-	help = 'customize naming format'
-)
-parser.add_argument(
-	'-v', dest = 'video', action = 'store_true',
-	help = 'download videos together'
-)
-parser.add_argument(
-	'-o', dest = 'overwrite', action = 'store_true',
-	help = 'overwrite existing files'
-)
+# Constants
+MOBILE_USER_AGENT = 'Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1'
+DEFAULT_HEADERS = {
+    'User-Agent': MOBILE_USER_AGENT,
+    'Referer': 'https://m.weibo.cn/',
+    'Accept': 'application/json, text/plain, */*',
+    'X-Requested-With': 'XMLHttpRequest',
+    'MWeibo-Pwa': '1',
+    'Sec-Fetch-Mode': 'cors',
+    'Sec-Fetch-Site': 'same-origin'
+}
 
-def nargs_fit(parser, args):
-	flags = parser._option_string_actions
-	short_flags = [flag for flag in flags.keys() if len(flag) == 2]
-	long_flags = [flag for flag in flags.keys() if len(flag) > 2]
-	short_flags_with_nargs = set([flag[1] for flag in short_flags if flags[flag].nargs])
-	short_flags_without_args = set([flag[1] for flag in short_flags if flags[flag].nargs == 0])
-	validate = lambda part : (re.match(r'-[^-]', part) and (set(part[1:-1]).issubset(short_flags_without_args) and '-' + part[-1] in short_flags)) or (part.startswith('--') and part in long_flags)
+parser = argparse.ArgumentParser(prog='weiboPicDownloader')
+group = parser.add_mutually_exclusive_group(required=True)
+group.add_argument('-u', metavar='user', dest='users', nargs='+', help='specify nickname or id of weibo users')
+group.add_argument('-f', metavar='file', dest='files', nargs='+', help='import list of users from files')
+parser.add_argument('-d', metavar='directory', dest='directory', help='set picture saving path')
+parser.add_argument('-s', metavar='size', dest='size', default=20, type=int, help='set size of thread pool')
+parser.add_argument('-r', metavar='retry', dest='retry', default=2, type=int, help='set maximum number of retries')
+parser.add_argument('-i', metavar='interval', dest='interval', default=1, type=float, help='set interval for feed requests')
+parser.add_argument('-c', metavar='cookie', dest='cookie', help='set cookie if needed')
+parser.add_argument('-b', metavar='boundary', dest='boundary', default=':', help='focus on weibos in the id range')
+parser.add_argument('-n', metavar='name', dest='name', default='{date}_{name}', help='customize naming format')
+parser.add_argument('-v', dest='video', action='store_true', help='download videos together')
+parser.add_argument('-o', dest='overwrite', action='store_true', help='overwrite existing files')
 
-	greedy = False
-	for index, arg in enumerate(args):
-		if arg.startswith('-'):
-			valid = validate(arg)
-			if valid and arg[-1] in short_flags_with_nargs:
-				greedy = True
-			elif valid:
-				greedy = False
-			elif greedy:
-				args[index] = ' ' + args[index]
-	return args
 
-def print_fit(string, pin = False):
-	if is_python2:
-		string = string.encode(system_encoding)
-	if pin == True:
-		sys.stdout.write('\r\033[K')
-		sys.stdout.write(string)
-		sys.stdout.flush()
-	else:
-		sys.stdout.write(string + '\n')
+class CookieFetcher:
+    """Fetches cookies using Selenium to bypass JS challenges."""
+    
+    def __init__(self):
+        if not HAS_SELENIUM:
+            print("Error: Selenium or webdriver-manager is not installed.")
+            print("Please run: pip install selenium webdriver-manager")
+            sys.exit(1)
 
-def input_fit(string = ''):
-	if is_python2:
-		return raw_input(string.encode(system_encoding)).decode(system_encoding)
-	else:
-		return input(string)
+    def fetch_cookies(self):
+        print("Launching browser to fetch cookies...")
+        options = Options()
+        if os.environ.get("HEADLESS_MODE") != "0": # Allow debug by setting env HEADLESS_MODE=0
+            options.add_argument('--headless')
+        options.add_argument('--disable-gpu')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        # Anti-detection
+        options.add_argument('--disable-blink-features=AutomationControlled')
+        options.add_argument(f'user-agent={MOBILE_USER_AGENT}')
+        
+        driver = None
+        try:
+            # Automatically install/manage driver
+            service = Service(ChromeDriverManager().install())
+            driver = webdriver.Chrome(service=service, options=options)
+            
+            driver.get('https://m.weibo.cn/')
+            
+            # Wait for key cookie or just a bit of time for JS to run
+            try:
+                # Wait up to 10s for the M_WEIBOCN_PARAMS or similar cookie
+                WebDriverWait(driver, 10).until(
+                   lambda d: 'm.weibo.cn' in d.current_url
+                )
+            except Exception:
+                pass
+            
+            # Additional small sleep to ensure _T_WM is set
+            time.sleep(2)
+            
+            selenium_cookies = driver.get_cookies()
+            cookie_dict = {}
+            for cookie in selenium_cookies:
+                cookie_dict[cookie['name']] = cookie['value']
+            
+            print("Cookies fetched successfully.")
+            return cookie_dict
+            
+        except Exception as e:
+            print("\n!!! Selenium Error Traceback !!!")
+            traceback.print_exc()
+            print(f"Failed to fetch cookies via Selenium.")
+            return None
+        finally:
+            if driver:
+                try:
+                    driver.quit()
+                except:
+                    pass
 
-def merge(*dicts):
-	result = {}
-	for dictionary in dicts: result.update(dictionary)
-	return result
 
-def quit(string = ''):
-	print_fit(string)
-	exit()
+class WeiboScraper:
+    def __init__(self, cookie=None):
+        self.session = requests.Session()
+        self.session.headers.update(DEFAULT_HEADERS)
+        self.session.verify = False
+        self.cookie_fetcher = None
+        self.manual_cookie = False
+        
+        if cookie:
+            self.session.headers['Cookie'] = cookie
+            self.manual_cookie = True
+        else:
+            # Init automator
+            self.cookie_fetcher = CookieFetcher()
+            cookies = self.cookie_fetcher.fetch_cookies()
+            if cookies:
+                requests.utils.add_dict_to_cookiejar(self.session.cookies, cookies)
 
-def make_dir(path):
-	try:
-		os.makedirs(path)
-	except Exception as e:
-		quit(str(e))
+    def request(self, method, url, allow_redirects=True, retry_auth=True):
+        try:
+            resp = self.session.request(method, url, timeout=10, allow_redirects=allow_redirects)
+            
+            # Check for soft-block (ok: -100) or HTTP 418/403
+            is_blocked = False
+            if resp.status_code in [403, 418]:
+                is_blocked = True
+            elif resp.status_code == 200:
+                try:
+                    # Only check JSON for API endpoints
+                    if 'api/container/getIndex' in url:
+                        data = resp.json()
+                        if data.get('ok') == -100:
+                            is_blocked = True
+                except:
+                    pass
+            
+            if is_blocked and retry_auth and not self.manual_cookie and self.cookie_fetcher:
+                print("\nAccess denied (Cookie expired or invalid). Refreshing cookies...")
+                new_cookies = self.cookie_fetcher.fetch_cookies()
+                if new_cookies:
+                    self.session.cookies.clear()
+                    requests.utils.add_dict_to_cookiejar(self.session.cookies, new_cookies)
+                    # Retry once
+                    return self.request(method, url, allow_redirects, retry_auth=False)
+                else:
+                    print("Failed to refresh cookies.")
 
-def confirm(message):
-	while True:
-		answer = input_fit('{} [Y/n] '.format(message)).strip()
-		if answer == 'y' or answer == 'Y':
-			return True
-		elif answer == 'n' or answer == 'N':
-			return False
-		print_fit('unexpected answer')
+            return resp
+            
+        except requests.RequestException as e:
+            if retry_auth: # Simple retry for network errors
+               print(f'Network error: {e}, retrying...')
+               time.sleep(1)
+               return self.request(method, url, allow_redirects, retry_auth=False)
+            print(f'Request failed: {e}')
+            return None
 
-def progress(part, whole, percent = False):
-	if percent:
-		return '{}/{}({}%)'.format(part, whole, int(float(part) / whole * 100))
-	else:
-		return '{}/{}'.format(part, whole)
+    def prime_cookies(self, uid):
+        """Visits the user profile page to initialize visitor cookies if manual/headless failed."""
+        if self.manual_cookie: return
+        url = f'https://m.weibo.cn/u/{uid}'
+        try:
+             self.session.get(url, headers={'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'})
+        except:
+             pass
 
-def request_fit(method, url, max_retry = 0, cookie = None, stream = False):
-	# 'Mozilla/5.0 (Linux; Android 9; Pixel 3 XL) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.80 Mobile Safari/537.36',
-	headers = {
-		'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/107.0.0.0 Safari/537.36',
-		'Referer': 'https://m.weibo.cn/', # Add Referer
-		'Cookie': cookie
-	}
-	return requests.request(method, url, headers = headers, timeout = 5, stream = stream, verify = False)
+    def nickname_to_uid(self, nickname):
+        """Resolves a nickname to a UID using m.weibo.cn redirect."""
+        url = f'https://m.weibo.cn/n/{nickname}'
+        try:
+            # allow_redirects=False is key for 302
+            resp = self.request('GET', url, allow_redirects=False)
+            if resp and resp.status_code == 302:
+                loc = resp.headers.get('Location', '')
+                match = re.search(r'/u/(\d+)', loc)
+                if match:
+                    return match.group(1)
+        except Exception as e:
+            print(f"Error resolving nickname: {e}")
+        return None
 
-def read_from_file(path):
-	try:
-		with open(path, 'r', encoding = 'utf-8-sig') as f:
-			return [line.strip().decode(system_encoding) if is_python2 else line.strip() for line in f]
-	except Exception as e:
-		quit(str(e))
+    def uid_to_nickname(self, uid):
+        """Fetches nickname from UID using getIndex API."""
+        self.prime_cookies(uid)
+        url = f'https://m.weibo.cn/api/container/getIndex?type=uid&value={uid}'
+        resp = self.request('GET', url)
+        if resp and resp.status_code == 200:
+            try:
+                data = resp.json()
+                if data.get('ok') == 1:
+                    return data['data']['userInfo']['screen_name']
+            except (KeyError, ValueError, IndexError):
+                pass
+        return str(uid)
 
-def nickname_to_uid(nickname):
-	url = 'https://m.weibo.cn/n/{}'.format(nickname)
-	print(url)
-	response = request_fit('GET', url, cookie = token)
-	if re.search(r'/u/\d{10}$', response.url):
-		return response.url[-10:]
-	else:
-		return
+    def get_containerid(self, uid):
+        """Finds the containerid for the 'Weibo' (posts) tab."""
+        self.prime_cookies(uid)
+        url = f'https://m.weibo.cn/api/container/getIndex?type=uid&value={uid}'
+        resp = self.request('GET', url)
+        if resp and resp.status_code == 200:
+            try:
+                data = resp.json()
+                if data.get('ok') == 1:
+                    tabs = data['data'].get('tabsInfo', {}).get('tabs', [])
+                    for tab in tabs:
+                        if tab.get('tab_type') == 'weibo':
+                            return tab.get('containerid')
+            except Exception:
+                pass
+        return f'107603{uid}'
 
-def uid_to_nickname(uid):
-	url = 'https://m.weibo.cn/api/container/getIndex?type=uid&value={}'.format(uid)
-	response = request_fit('GET', url, cookie = token)
-	try:
-		return json.loads(response.text)['data']['userInfo']['screen_name']
-	except:
-		url = 'https://m.weibo.cn/api/container/getIndex?count=10&page=1&containerid=107603{}'.format(uid)
-		response = request_fit('GET', url, cookie = token)
-		try:
-			json_data = json.loads(response.text)
-			return json_data['data']['cards'][0]['mblog']['user']['screen_name']
-		except:
-			return
+    def parse_date(self, text):
+        now = datetime.datetime.now()
+        try:
+            # Handle "Mon Dec 01 19:13:30 +0800 2025"
+            return datetime.datetime.strptime(text, '%a %b %d %H:%M:%S %z %Y').date()
+        except ValueError:
+            if '前' in text:
+                match = re.search(r'\d+', text)
+                if match:
+                    num = int(match.group())
+                    if '分钟' in text or 'min' in text:
+                        return (now - datetime.timedelta(minutes=num)).date()
+                    elif '小时' in text or 'hour' in text:
+                        return (now - datetime.timedelta(hours=num)).date()
+                return now.date()
+            elif '昨天' in text:
+                return (now - datetime.timedelta(days=1)).date()
+            elif re.search(r'^\d{2}-\d{2}$', text): # 12-21
+                return datetime.datetime.strptime(f'{now.year}-{text}', '%Y-%m-%d').date()
+            elif re.search(r'^\d{4}-\d{2}-\d{2}$', text): # 2024-12-21
+                return datetime.datetime.strptime(text, '%Y-%m-%d').date()
+        return now.date()  # Default to today if unknown
+
+    def get_resources(self, uid, video, interval, limit):
+        containerid = self.get_containerid(uid)
+        print(f'Fetching posts for containerid: {containerid}')
+        
+        page = 1
+        resources = []
+        finish = False
+        empty_count = 0
+        
+        while not finish and empty_count < 3:
+            url = f'https://m.weibo.cn/api/container/getIndex?containerid={containerid}&page={page}'
+            resp = self.request('GET', url)
+            
+            if not resp or resp.status_code != 200:
+                print(f'Failed to fetch page {page}, stopping.')
+                break
+                
+            try:
+                data = resp.json()
+                ok = data.get('ok')
+                
+                # Check soft-block although .request() should have handled it.
+                # If we are here, it means retry failed or it's a different issue.
+                if ok == -100:
+                     print("Error: Access denied (Login Required).")
+                     print("Trying manual cookie is recommended if auto-fetch fails.")
+                     break
+                     
+                if ok != 1:
+                    # End of feed usually returns ok=0
+                    print('End of feed.')
+                    break
+                    
+                cards = data['data']['cards']
+                if not cards:
+                    print(f"Page {page} is empty.")
+                    empty_count += 1
+                    page += 1
+                    continue
+                else:
+                    empty_count = 0
+                    
+                for card in cards:
+                    if card['card_type'] != 9:
+                        continue
+                        
+                    mblog = card.get('mblog')
+                    if not mblog: continue
+                    
+                    mid = str(mblog['id'])
+                    date = self.parse_date(mblog['created_at'])
+
+                    # Boundary Check
+                    if card['profile_type_id'] != 'proweibotop_' and ('title' not in mblog or mblog['title'] != '置顶'):
+                        if limit[1] != float('inf') and date > limit[1]:
+                            logger.debug(f"Boundary Check: {date} > {limit[1]}")
+                            print(f"Boundary Check: {date} > {limit[1]}")
+                            continue
+                        if limit[0] != 0 and date < limit[0]:
+                            logger.debug(f"Boundary Check: {date} < {limit[0]}")
+                            print(f"Boundary Check: {date} < {limit[0]}")
+                            finish = True
+                            break
+                        
+                    mark = {'mid': mid, 'date': date, 'text': mblog.get('text', '')}
+                    
+                    # Photos
+                    if 'pics' in mblog:
+                        for idx, pic in enumerate(mblog['pics'], 1):
+                            if 'large' in pic:
+                                url = pic['large']['url']
+                                resources.append({**mark, 'url': url, 'index': idx, 'type': 'photo'})
+                    
+                    # Videos
+                    if video and 'page_info' in mblog:
+                        page_info = mblog['page_info']
+                        if page_info.get('type') == 'video':
+                            media_info = page_info.get('media_info', {})
+                            video_url = media_info.get('stream_url_hd') or \
+                                        media_info.get('mp4_720p_mp4') or \
+                                        media_info.get('mp4_hd_url') or \
+                                        media_info.get('stream_url')
+                            
+                            if video_url:
+                                resources.append({**mark, 'url': video_url, 'index': 1, 'type': 'video'})
+                                
+            except Exception as e:
+                print(f'Error parsing page {page}: {e}')
+                
+            print(f'Page {page} analyzed. Total resources: {len(resources)}', end='\r')
+            page += 1
+            time.sleep(interval)
+            
+        print(f'\nFinished scanning. Total {len(resources)} items.')
+        return resources
+
 
 def bid_to_mid(string):
-	alphabet = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
-	alphabet = {x: n for n, x in enumerate(alphabet)}
+    # Only useful if user provides Base62 ID (bid) instead of numeric mid
+    # Modern m.weibo.cn usually returns numeric 'id'
+    alphabet = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    base = len(alphabet)
+    alphabet_map = {x: n for n, x in enumerate(alphabet)}
+    
+    mid = 0
+    for char in string:
+        mid = mid * base + alphabet_map[char]
+    return mid
 
-	splited = [string[(g + 1) * -4 : g * -4 if g * -4 else None] for g in reversed(range(math.ceil(len(string) / 4.0)))]
-	convert = lambda s : str(sum([alphabet[c] * (len(alphabet) ** k) for k, c in enumerate(reversed(s))])).zfill(7)
-	return int(''.join(map(convert, splited)))
+def format_name(item, name_format):
+    # Clean up URL to get filename
+    url_path = urlparse(item['url']).path
+    filename = os.path.basename(url_path)
+    if not filename:
+        filename = f"{item['mid']}_{item['index']}.jpg"
+    file_root, file_ext = os.path.splitext(filename)
+        
+    def safeify(text):
+        return re.sub(r'[\\/:*?"<>|]', '_', text)
 
-def parse_date(text):
-	now = datetime.datetime.now()
-	if u'前' in text:
-		if u'小时' in text:
-			return (now - datetime.timedelta(hours = int(re.search(r'\d+', text).group()))).date()
-		else:
-			return now.date()
-	elif u'昨天' in text:
-		return now.date() - datetime.timedelta(days = 1)
-	elif re.search(r'^[\d|-]+$', text):
-		return datetime.datetime.strptime(((str(now.year) + '-') if not re.search(r'^\d{4}', text) else '') + text, '%Y-%m-%d').date()
-	elif re.search(r'[A-Za-z]{3} [A-Za-z]{3} \d{2} \d{2}:\d{2}:\d{2} \+\d{4} \d{4}', text): #"Tue Dec 03 12:27:46 +0800 2019"
-		return datetime.datetime.strptime(text, "%a %b %d %H:%M:%S %z %Y").date()
+    def substitute(matched):
+        key = matched.group(1).split(':')
+        k = key[0]
+        v = ''
+        if k == 'name':
+           v = file_root
+        elif k == 'date':
+           v = item['date'].strftime(key[1]) if len(key) > 1 else str(item['date'])
+        elif k == 'index':
+           v = str(item['index']).zfill(int(key[1] if len(key) > 1 else '0'))
+        elif k == 'text':
+           v = re.sub(r'<.*?>', '', item['text']).strip()[:50] # Limit text length
+        elif k in item:
+           v = str(item[k])
+        return safeify(v)
 
-def compare(standard, operation, candidate):
-	for target in candidate:
-		try:
-			result = '>=<'
-			if standard > target: result = '>'
-			elif standard == target: result = '='
-			else: result = '<'
-			return result in operation
-		except TypeError:
-			pass
+    if '{' in name_format:
+        return re.sub(r'{(.*?)}', substitute, name_format) + file_ext
+    
+    return safeify(filename)
 
-def get_resources(uid, video, interval, limit):
-	page = 1
-	size = 25
-	amount = 0
-	total = 0
-	empty = 0
-	aware = 1
-	exceed = False
-	resources = []
+def download_file(url, path, overwrite):
+    if os.path.exists(path) and not overwrite:
+        if os.path.getsize(path) > 0:
+            return True
+            
+    try:
+        resp = requests.get(url, stream=True, timeout=20, headers=DEFAULT_HEADERS, verify=False)
+        if resp.status_code != 200:
+            return False
+            
+        with open(path, 'wb') as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+        return True
+    except Exception:
+        if os.path.exists(path):
+            os.remove(path)
+        return False
 
-	while empty < aware and page < 5000 and not exceed:
-		try:
-			url = 'https://m.weibo.cn/api/container/getIndex?count={}&page={}&containerid=107603{}'.format(size, page, uid)
-			# print(url)
-			response = request_fit('GET', url, cookie = token)
-			assert response.status_code != 418
-			json_data = json.loads(response.text)
+def main():
+    args = parser.parse_args()
+    
+    # Process Users
+    users = []
+    if args.users:
+        users = args.users
+    elif args.files:
+        for fpath in args.files:
+            if os.path.isfile(fpath):
+                with open(fpath, 'r', encoding='utf-8') as f:
+                    users.extend([line.strip() for line in f if line.strip()])
+    
+    # Target Directory
+    base_dir = args.directory if args.directory else os.path.join(os.path.dirname(__file__), 'weiboPic')
+    if not os.path.exists(base_dir):
+        os.makedirs(base_dir)
+        
+    # Cookie
+    cookie = None
+    if args.cookie:
+        if os.path.isfile(args.cookie):
+            with open(args.cookie, 'r', encoding='utf-8') as f:
+                cookie = f.read().strip()
+        else:
+            cookie = args.cookie
+            
+    # Boundary
+    print(f"{args.boundary=}")
+    boundary = args.boundary.split(':')
+    if len(boundary) == 1: boundary = boundary * 2
+    
+    def parse_boundary(val):
+        if not val: return None
+        if val.startswith('@'):
+            val = val[1:]
+        try:
+            if '-' in val:
+                return datetime.datetime.strptime(val, '%Y-%m-%d').date()
+            return datetime.datetime.strptime(val, '%Y%m%d').date()
+        except ValueError:
+            return None
+        
+    b_start = parse_boundary(boundary[0]) or datetime.date(2000, 1, 1) # Way past
+    b_end = parse_boundary(boundary[1]) or datetime.date(2099, 12, 31) # Way future
+    limit = (b_start, b_end)
+    print(f"{limit=}")
 
-		except AssertionError:
-			print_fit('punished by anti-scraping mechanism (#{})'.format(page), pin = True)
-			empty = aware
-		except Exception:
-			pass
-		else:
-			empty = empty + 1 if json_data['ok'] == 0 else 0
-			if total == 0 and 'cardlistInfo' in json_data['data']: total = json_data['data']['cardlistInfo']['total']
-			cards = json_data['data']['cards']
-			for card in cards:
-				if 'mblog' in card:
-					mblog = card['mblog']
-					#if 'isTop' in mblog and mblog['isTop']: continue
-					mid = int(mblog['mid'])
-					date = parse_date(mblog['created_at'])
-					try:
-						if not ('isTop' in mblog or ('title' in mblog and mblog['title']['text'] == "置顶") ): 
-							if limit[0] - date >= datetime.timedelta(seconds= 0):
-								exceed = True
-								continue
-					except:
-						pass
-					mark = {'mid': mid, 'bid': mblog['bid'], 'date': date, 'text': mblog['text']}
-					amount += 1
-					#if compare(limit[0], '>', [mid, date]): exceed = True
-					#if compare(limit[0], '>', [mid, date]) or compare(limit[1], '<', [mid, date]): continue
-					if 'pics' in mblog:
-						for index, pic in enumerate(mblog['pics'], 1):
-							if 'large' in pic:
-								#if mblog['created_at'] == "Tue Nov 15 13:19:59 +0800 2022":
-								#	print(pic['large']['url'])
-								resources.append(merge({'url': pic['large']['url'], 'index': index, 'type': 'photo'}, mark))
-					elif 'page_info' in mblog and video:
-						if 'media_info' in mblog['page_info'] or 'urls' in mblog['page_info']:
-							media_info = mblog['page_info']['media_info'] if 'media_info' in mblog['page_info'] else {}
-							if 'urls' in mblog['page_info'] and mblog['page_info']['urls']:
-								for key in mblog['page_info']['urls']:
-									if key not in media_info:
-										media_info[key] = mblog['page_info']['urls'][key]
-							resolutions = ['mp4_720p_mp4', 'mp4_hd_url', 'mp4_hd_mp4', 'stream_url_hd', 'mp4_sd_url', 'mp4_ld_mp4', 'stream_url']
-							streams = [media_info[key] for key in resolutions if key in media_info and media_info[key]]
-							if streams:
-								resources.append(merge({'url': streams.pop(0), 'type': 'video'}, mark))
-			print_fit('{} {}(#{})'.format('analysing weibos...' if empty < aware and not exceed else 'finish analysis', progress(amount, total), page), pin = True)
-			page += 1
-		finally:
-			time.sleep(interval)
+    scraper = WeiboScraper(cookie)
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=args.size)
 
-	print_fit('\npractically scan {} weibos, get {} {}'.format(amount, len(resources), 'resources' if video else 'pictures'))
-	return resources
+    for i, user_input in enumerate(users, 1):
+        print(f'[{i}/{len(users)}] Processing: {user_input}')
+        
+        uid = None
+        nickname = None
+        
+        if user_input.isdigit():
+            uid = user_input
+            nickname = scraper.uid_to_nickname(uid)
+        else:
+            uid = scraper.nickname_to_uid(user_input)
+            nickname = user_input
+            
+        if not uid:
+            print(f'Could not resolve UID for {user_input}')
+            continue
+            
+        print(f'User: {nickname} (UID: {uid})')
+        
+        resources = scraper.get_resources(uid, args.video, args.interval, limit)
+        
+        if not resources:
+            print('No resources found.')
+            continue
+            
+        user_dir = os.path.join(base_dir, nickname)
+        if not os.path.exists(user_dir):
+            os.makedirs(user_dir)
+            
+        print(f'Downloading {len(resources)} items...')
+        
+        futures = []
+        for res in resources:
+            fname = format_name(res, args.name)
+            fpath = os.path.join(user_dir, fname)
+            futures.append(pool.submit(download_file, res['url'], fpath, args.overwrite))
+            
+        done_count = 0
+        for future in concurrent.futures.as_completed(futures):
+            res = future.result()
+            done_count += 1
+            print(f'Progress: {done_count}/{len(resources)}', end='\r')
+            
+        print('\nDone.')
 
-def format_name(item):
-	item['name'] = re.sub(r'\?\S+$', '', re.sub(r'^\S+/', '', item['url']))
-
-	def safeify(name):
-		template = {u'\\': u'＼', u'/': u'／', u':': u'：', u'*': u'＊', u'?': u'？', u'"': u'＂', u'<': u'＜', u'>': u'＞', u'|': u'｜'}
-		for illegal in template:
-			name = name.replace(illegal, template[illegal])
-		return name
-
-	def substitute(matched):
-		key = matched.group(1).split(':')
-		if key[0] not in item:
-			return ':'.join(key)
-		elif key[0] == 'date':
-			return item[key[0]].strftime(key[1]) if len(key) > 1 else str(item[key[0]])
-		elif key[0] == 'index':
-			return str(item[key[0]]).zfill(int(key[1] if len(key) > 1 else '0'))
-		elif key[0] == 'text':
-			return re.sub(r'<.*?>', '', item[key[0]]).strip()
-		else:
-			return str(item[key[0]])
-
-	return safeify(re.sub(r'{(.*?)}', substitute, args.name))
-
-def download(url, path, overwrite):
-	if os.path.exists(path):
-		if os.path.getsize(path) <= 320 and os.path.getsize(path) >= 310:
-			os.remove(path)
-	if os.path.exists(path) and not overwrite:
-		return True
-	try:
-		response = request_fit('GET', url, stream = True)
-		if os.path.exists(path):
-			if os.path.getsize(path) == int(response.headers['Content-Length']):
-				return True
-		if response.headers['Content-Type'] == "text/html":
-			return False
-
-		with open(path, 'wb') as f:
-			for chunk in response.iter_content(chunk_size = 512):
-				if chunk:
-					f.write(chunk)
-	except Exception:
-		if os.path.exists(path): os.remove(path)
-		return False
-	else:
-		return True
-
-
-args = parser.parse_args(nargs_fit(parser, sys.argv[1:]))
-
-if args.users:
-	users = [user.decode(system_encoding) for user in args.users] if is_python2 else args.users
-elif args.files:
-	users = [read_from_file(path.strip()) for path in args.files]
-	users = reduce(lambda x, y : x + y, users)
-users = [user.strip() for user in users]
-
-if args.directory:
-	base = args.directory
-	if os.path.exists(base):
-		if not os.path.isdir(base): quit('saving path is not a directory')
-	elif confirm('directory "{}" doesn\'t exist, help to create?'.format(base)):
-		make_dir(base)
-	else:
-		quit('do it youself :)')
-else:
-	base = os.path.join(os.path.dirname(__file__), 'weiboPic')
-	if not os.path.exists(base): make_dir(base)
-
-boundary = args.boundary.split(':')
-boundary = boundary * 2 if len(boundary) == 1 else boundary
-numberify = lambda x: int(x) if re.search(r'^\d+$', x) else bid_to_mid(x)
-dateify = lambda t: datetime.datetime.strptime(t, '@%Y%m%d').date()
-parse_point = lambda p: dateify(p) if p.startswith('@') else numberify(p)
-try:
-	boundary[0] = 0 if boundary[0] == '' else parse_point(boundary[0])
-	boundary[1] = float('inf') if boundary[1] == '' else parse_point(boundary[1])
-	if type(boundary[0]) == type(boundary[1]): assert boundary[0] <= boundary[1]
-except:
-	quit('invalid id range {}'.format(args.boundary))
-
-token = 'SUB={}'.format(args.cookie) if args.cookie else None
-pool = concurrent.futures.ThreadPoolExecutor(max_workers = args.size)
-
-for number, user in enumerate(users, 1):
-	
-	print_fit('{}/{} {}'.format(number, len(users), time.ctime()))
-	
-	if re.search(r'^\d{10}$', user):
-		nickname = uid_to_nickname(user)
-		uid = user
-	else:
-		nickname = user
-		uid = nickname_to_uid(user)
-
-	if not nickname or not uid:
-		print_fit('invalid account {}'.format(user))
-		print_fit('-' * 30)
-		continue
-
-	print_fit('{} {}'.format(nickname, uid))
-	
-	try:
-		resources = get_resources(uid, args.video, args.interval, boundary)
-	except KeyboardInterrupt:
-		quit()
-
-	album = os.path.join(base, nickname)
-	if resources and not os.path.exists(album): make_dir(album)
-
-	retry = 0
-	while resources and retry <= args.retry:
-		
-		if retry > 0: print_fit('automatic retry {}'.format(retry))
-
-		total = len(resources)
-		tasks = []
-		done = 0
-		failed = {}
-		cancel = False
-
-		for resource in resources:
-			path = os.path.join(album, format_name(resource))
-			tasks.append(pool.submit(download, resource['url'], path, args.overwrite))
-
-		while done != total:
-			try:
-				done = 0
-				for index, task in enumerate(tasks):
-					if task.done() == True:
-						done += 1
-						if task.cancelled(): continue
-						elif task.result() == False: failed[index] = ''
-					elif cancel:
-						if not task.cancelled(): task.cancel()
-				time.sleep(0.5)
-			except KeyboardInterrupt:
-				cancel = True
-			finally:
-				if not cancel:
-					print_fit('{} {}'.format(
-						'downloading...' if done != total else 'all tasks done',
-						progress(done, total, True)
-					), pin = True)
-				else:
-					print_fit('waiting for cancellation... ({})'.format(total - done), pin = True) 
-
-		if cancel: quit()
-		print_fit('\nsuccess {}, failure {}, total {}'.format(total - len(failed), len(failed), total))
-
-		resources = [resources[index] for index in failed]
-		retry += 1
-
-	for resource in resources: 
-		path = os.path.join(album, format_name(resource))
-		print_fit('{} {} failed'.format(path, resource['url']))
-	print_fit('-' * 30)
-
-quit('bye bye')
+if __name__ == '__main__':
+    main()

@@ -40,7 +40,7 @@ optional arguments:
   -s size             set size of thread pool
   -r retry            set maximum number of retries
   -i interval         set interval for feed requests
-  -c cookie           set cookie if needed
+  -c cookie           设置 Cookie 或 Cookie 文件（优先识别文件路径）
   -b boundary         focus on weibos in the id range
   -n name             customize naming format
   -v                  download videos together
@@ -70,3 +70,14 @@ optional arguments:
 2. 右键检查 > Application > Cookies > https://m.weibo.cn
 3. 双击 `SUB` 所在行并右键拷贝它的值
 4. 将 `SUB` 的值粘贴到命令行窗口，以 `-c <value>` 的方式运行程序
+
+## �p�󴣨� Cookie�]Chrome �ܨҡ^
+
+1. ��? https://m.weibo.cn �}�n?
+2. ??�̤u�� > Application > Cookies > https://m.weibo.cn
+3. �`���� Cookie�]����^�A�Φܤ��`�� `SUB` ����
+4. �q? `-c` ���ѡG
+   - ���G? Cookie �O�s�� `cookie.txt`�A�M�Z `-c cookie.txt`
+   - �r�Ŧ�G`-c "SUB=...; SUBP=...; XSRF-TOKEN=..."` �� `-c "<SUB ��>"`
+
+?���G`-c` ?ɬ��?�@����??���F�Y��󤣦s�b�A�A���r�Ŧ�ѪR�C�Y�r�Ŧ�]�t `=` �� `;`�A?������ Cookie ?�e�F�_??�Q?�@ `SUB` ����?�z�C
