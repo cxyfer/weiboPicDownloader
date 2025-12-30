@@ -1,6 +1,7 @@
 import { DEFAULT_SETTINGS, STORAGE_KEYS } from '../common/constants.js';
 import { parseWeiboUrl } from './urlParser.js';
 import { nicknameToUid, fetchUserFeed, fetchSupertopicFeed, fetchSinglePost } from './weiboParser.js';
+import { apiFetch } from './apiClient.js';
 import { DownloadManager } from './downloads.js';
 import { sanitizeFilename } from './naming.js';
 import { logger } from './logger.js';
@@ -489,15 +490,62 @@ function sanitize(text) {
 }
 
 async function checkLogin() {
-  const [desktop, mobile] = await Promise.all([
-    chrome.cookies.getAll({ domain: 'weibo.com', name: 'SUB' }),
-    chrome.cookies.getAll({ domain: 'm.weibo.cn', name: 'SUB' })
-  ]);
-  debug('Check login', { desktop: desktop.length, mobile: mobile.length });
+  let apiOk = false;
+  let apiLogin = null;
+
+  const apiPromise = apiFetch('https://m.weibo.cn/api/config', { redirect: 'follow' })
+    .then(({ data }) => {
+      const loginVal = data?.data?.login;
+      if (typeof loginVal === 'boolean') {
+        return { ok: true, login: loginVal };
+      }
+      if (loginVal === 1 || loginVal === '1') {
+        return { ok: true, login: true };
+      }
+      if (loginVal === 0 || loginVal === '0') {
+        return { ok: true, login: false };
+      }
+      return { ok: false, login: null };
+    })
+    .catch(err => {
+      debug('Check login api failed', err?.message || String(err));
+      return { ok: false, login: null };
+    });
+
+  const cookiePromise = Promise.all([
+    chrome.cookies.getAll({ domain: 'weibo.com', name: 'SSOLoginState' }),
+    chrome.cookies.getAll({ domain: 'm.weibo.cn', name: 'SSOLoginState' }),
+    chrome.cookies.getAll({ domain: 'm.weibo.cn', name: 'MLOGIN' })
+  ]).catch(err => {
+    debug('Check login cookies failed', err?.message || String(err));
+    return [[], [], []];
+  });
+
+  const [apiResult, [desktopSso, mobileSso, mobileLogin]] = await Promise.all([apiPromise, cookiePromise]);
+
+  apiOk = apiResult.ok;
+  apiLogin = apiResult.login;
+
+  const hasMlogin = mobileLogin.some(item => item?.value === '1');
+  const cookieLoggedIn = hasMlogin || desktopSso.length > 0 || mobileSso.length > 0;
+  const loggedIn = apiOk ? apiLogin : cookieLoggedIn;
+
+  debug('Check login', {
+    apiOk,
+    apiLogin,
+    cookieLoggedIn,
+    ssoDesktop: desktopSso.length,
+    ssoMobile: mobileSso.length,
+    hasMlogin
+  });
+
   return {
-    loggedIn: desktop.length > 0 || mobile.length > 0,
-    desktop: desktop.length > 0,
-    mobile: mobile.length > 0,
+    loggedIn,
+    apiOk,
+    apiLogin,
+    ssoDesktop: desktopSso.length > 0,
+    ssoMobile: mobileSso.length > 0,
+    mlogin: hasMlogin ? '1' : '0',
     ts: Date.now()
   };
 }
