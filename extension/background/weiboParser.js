@@ -4,9 +4,9 @@ import { apiFetch, RateLimitError } from './apiClient.js';
 export async function nicknameToUid(nickname) {
   if (!nickname) return null;
   const url = `https://m.weibo.cn/n/${encodeURIComponent(nickname)}`;
-  const resp = await apiFetch(url, { redirect: 'manual' });
-  if (resp.redirect && resp.location) {
-    const match = /\/u\/(\d+)/.exec(resp.location);
+  const resp = await apiFetch(url, { redirect: 'follow' });
+  if (resp.url) {
+    const match = /\/u\/(\d+)/.exec(resp.url);
     if (match) return match[1];
   }
   return null;

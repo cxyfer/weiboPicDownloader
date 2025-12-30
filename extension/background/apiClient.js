@@ -87,7 +87,7 @@ async function parseResponse(response) {
     throw error;
   }
 
-  return { status: response.status, data };
+  return { status: response.status, data, url: response.url };
 }
 
 function delay(ms) {

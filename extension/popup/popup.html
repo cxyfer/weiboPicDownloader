@@ -56,6 +56,7 @@
           <input id="date-start" type="date" name="date-start" aria-label="起始日期">
           <span class="separator">–</span>
           <input id="date-end" type="date" name="date-end" aria-label="結束日期">
+          <button type="button" class="btn-reset" id="reset-date-btn" title="重置日期">↺</button>
         </div>
       </div>
 
@@ -65,21 +66,8 @@
           <input id="page-start-input" type="number" min="1" placeholder="起始頁" value="1" aria-label="起始頁">
           <span class="separator">–</span>
           <input id="page-end-input" type="number" min="0" placeholder="結束頁" value="0" aria-label="結束頁">
+          <button type="button" class="btn-reset" id="reset-page-btn" title="重置頁數">↺</button>
         </div>
-      </div>
-
-      <div class="field-group">
-        <label for="user-path-input">用戶下載路徑</label>
-        <input id="user-path-input" type="text" class="code-input" value="weiboPic/{nickname}/{date:yyyy-MM-dd}_{filename}{ext}">
-      </div>
-
-      <div class="field-group">
-        <label for="supertopic-path-input">超話下載路徑</label>
-        <input id="supertopic-path-input" type="text" class="code-input" value="weiboPic/SuperTopic/{nickname}/{date:yyyy-MM-dd}_{filename}{ext}">
-      </div>
-
-      <div class="info-box">
-        <strong>可用變數：</strong>{nickname} {filename} {ext} {id} {date} {date:yyyy-MM-dd}
       </div>
 
       <div class="field-group">
@@ -90,25 +78,39 @@
       </div>
 
       <details class="advanced-settings">
-        <summary>進階參數</summary>
-        <div class="advanced-content">
+        <summary>進階選項</summary>
+        <div class="advanced-content-full">
           <div class="field-group">
-            <label for="concurrency-input">同時下載數</label>
-            <input id="concurrency-input" type="number" min="1" max="10" value="3">
-            <small class="hint">建議 1-5</small>
+            <label for="user-path-input">用戶下載路徑</label>
+            <input id="user-path-input" type="text" class="code-input" value="weiboPic/{nickname}/{date:yyyy-MM-dd}_{filename}{ext}">
           </div>
           <div class="field-group">
-            <label for="interval-page-input">翻頁間隔 (秒)</label>
-            <input id="interval-page-input" type="number" min="0" step="0.5" value="1">
+            <label for="supertopic-path-input">超話下載路徑</label>
+            <input id="supertopic-path-input" type="text" class="code-input" value="weiboPic/SuperTopic/{nickname}/{date:yyyy-MM-dd}_{filename}{ext}">
           </div>
-          <div class="field-group">
-            <label for="interval-download-input">下載間隔 (秒)</label>
-            <input id="interval-download-input" type="number" min="0" step="0.1" value="0">
+          <div class="info-box">
+            <strong>可用變數：</strong>{nickname} {filename} {ext} {id} {date} {date:yyyy-MM-dd}
+          </div>
+          <div class="advanced-grid">
+            <div class="field-group">
+              <label for="concurrency-input">同時下載數</label>
+              <input id="concurrency-input" type="number" min="1" max="10" value="3">
+              <small class="hint">建議 1-5</small>
+            </div>
+            <div class="field-group">
+              <label for="interval-page-input">翻頁間隔 (秒)</label>
+              <input id="interval-page-input" type="number" min="0" step="0.5" value="1">
+            </div>
+            <div class="field-group">
+              <label for="interval-download-input">下載間隔 (秒)</label>
+              <input id="interval-download-input" type="number" min="0" step="0.1" value="0">
+            </div>
           </div>
         </div>
       </details>
 
       <button type="submit" class="btn-save">儲存設定</button>
+      <button type="button" class="btn-reset-all" id="reset-all-btn">重置為預設值</button>
       <p id="settings-status" class="muted"></p>
     </form>
   </section>

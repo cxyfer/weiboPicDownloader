@@ -451,3 +451,30 @@ function setSettingsStatus(msg, isError = false) {
     setTimeout(() => { settingsStatus.textContent = ''; }, 2000);
   }
 }
+
+$('reset-date-btn').addEventListener('click', () => {
+  dateStartInput.value = '';
+  dateEndInput.value = '';
+  setSettingsStatus('日期已重置');
+});
+
+$('reset-page-btn').addEventListener('click', () => {
+  pageStartInput.value = 1;
+  pageEndInput.value = 0;
+  setSettingsStatus('頁數已重置');
+});
+
+$('reset-all-btn').addEventListener('click', async () => {
+  videoCheckbox.checked = false;
+  pageStartInput.value = 1;
+  pageEndInput.value = 0;
+  dateStartInput.value = '';
+  dateEndInput.value = '';
+  userPathInput.value = 'weiboPic/{nickname}/{date:yyyy-MM-dd}_{filename}{ext}';
+  supertopicPathInput.value = 'weiboPic/SuperTopic/{nickname}/{date:yyyy-MM-dd}_{filename}{ext}';
+  autoDownloadCheckbox.checked = false;
+  concurrencyInput.value = 3;
+  intervalPageInput.value = 1;
+  intervalDownloadInput.value = 0;
+  setSettingsStatus('已重置為預設值，請儲存');
+});

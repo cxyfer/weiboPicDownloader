@@ -527,6 +527,72 @@ button[type="submit"]:hover {
   gap: 8px;
 }
 
+.advanced-content-full {
+  margin-top: 10px;
+}
+
+.advanced-content-full .field-group {
+  margin-bottom: 10px;
+}
+
+.advanced-content-full .info-box {
+  margin-bottom: 10px;
+}
+
+.advanced-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.advanced-grid .field-group {
+  margin-bottom: 0;
+}
+
+.advanced-grid label {
+  font-size: 11px;
+}
+
+.advanced-grid input {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.btn-reset {
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  cursor: pointer;
+  font-size: 14px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.btn-reset:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.btn-reset-all {
+  width: 100%;
+  padding: 8px;
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--muted);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.btn-reset-all:hover {
+  background: #fdecea;
+  border-color: var(--error);
+  color: var(--error);
+}
+
 .advanced-content .field-group {
   margin-bottom: 0;
 }
