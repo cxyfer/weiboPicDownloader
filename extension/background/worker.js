@@ -314,9 +314,16 @@ async function fetchResources(task) {
     if (!containerid) throw new Error('缺少 containerid');
     debug('Fetching supertopic feed', { containerid });
     const result = await fetchSupertopicFeed(containerid, opts);
+    const targetName = result.supertopicName || containerid;
+    debug('Supertopic feed fetched', { containerid, supertopicName: result.supertopicName, targetName, count: result.resources.length });
     return {
       resources: result.resources.map((r, i) => ({ ...r, _taskId: task.id, index: r.index || i + 1 })),
-      meta: { containerid, targetName: containerid, containerUrls: result.containerUrls || [] }
+      meta: {
+        containerid,
+        supertopicName: result.supertopicName,
+        targetName,
+        containerUrls: result.containerUrls || []
+      }
     };
   }
 

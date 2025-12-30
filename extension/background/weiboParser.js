@@ -63,6 +63,10 @@ export async function fetchUserFeed(uid, options = {}) {
       const mblog = card.mblog;
       if (!mblog) continue;
 
+      if (!username && mblog.user?.screen_name && String(mblog.user?.id) === String(uid)) {
+        username = mblog.user.screen_name;
+      }
+
       const pinned = card.profile_type_id === 'proweibotop_' || mblog.title === '置顶';
       const { base, media } = extractMedia(mblog, { video });
 
@@ -89,6 +93,7 @@ export async function fetchSupertopicFeed(containerid, options = {}) {
   const limit = normalizeLimit(dateRange);
   const resources = [];
   const containerUrls = [];
+  let supertopicName = null;
   let page = 1;
   let emptyCount = 0;
   let finish = false;
@@ -97,6 +102,11 @@ export async function fetchSupertopicFeed(containerid, options = {}) {
     const url = buildUrl(API_ENDPOINTS.CONTAINER, { containerid: `${containerid}_-_feed`, page });
     containerUrls.push(url);
     const { data } = await apiFetch(url);
+
+    if (!supertopicName) {
+      const titleTop = data?.data?.pageInfo?.title_top;
+      if (titleTop && typeof titleTop === 'string') supertopicName = titleTop;
+    }
 
     if (data?.ok === -100) {
       throw new RateLimitError('Blocked or login required', { status: 200, data });
@@ -130,7 +140,7 @@ export async function fetchSupertopicFeed(containerid, options = {}) {
     if (interval > 0) await wait(interval * 1000);
   }
 
-  return { containerid, resources, containerUrls: containerUrls.slice(-50) };
+  return { containerid, resources, containerUrls: containerUrls.slice(-50), supertopicName };
 }
 
 export async function fetchSinglePost(mid, options = {}) {
