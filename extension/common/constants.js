@@ -20,6 +20,8 @@ export const DEFAULT_SETTINGS = Object.freeze({
   retry: 2,
   concurrency: 3,
   maxConcurrency: 10,
+  basePath: 'weiboPic',
+  autoDownload: false,
   nameTemplate: '{date}_{name}',
   dateRange: { start: null, end: null },
   overwrite: false

@@ -30,6 +30,7 @@ export async function fetchUserFeed(uid, options = {}) {
   const containerid = await uidToContainerId(uid);
   const resources = [];
   const containerUrls = [];
+  let username = null;
   let page = 1;
   let emptyCount = 0;
   let finish = false;
@@ -38,6 +39,11 @@ export async function fetchUserFeed(uid, options = {}) {
     const url = buildUrl(API_ENDPOINTS.CONTAINER, { containerid, page });
     containerUrls.push(url);
     const { data } = await apiFetch(url);
+
+    if (!username) {
+      const screenName = data?.data?.userInfo?.screen_name;
+      if (screenName) username = screenName;
+    }
 
     if (data?.ok === -100) {
       throw new RateLimitError('Blocked or login required', { status: 200, data });
@@ -75,7 +81,7 @@ export async function fetchUserFeed(uid, options = {}) {
     if (interval > 0) await wait(interval * 1000);
   }
 
-  return { containerid, resources, containerUrls: containerUrls.slice(-50) };
+  return { containerid, resources, containerUrls: containerUrls.slice(-50), username };
 }
 
 export async function fetchSupertopicFeed(containerid, options = {}) {

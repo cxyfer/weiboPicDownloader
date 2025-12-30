@@ -1,38 +1,34 @@
 import { formatFilename } from './naming.js';
 import { logger } from './logger.js';
+import { DEFAULT_SETTINGS, STORAGE_KEYS } from '../common/constants.js';
 
-const BASE_FOLDER = 'weiboPic';
+const DEFAULT_BASE_PATH = DEFAULT_SETTINGS.basePath || 'weiboPic';
+let basePathCache = DEFAULT_BASE_PATH;
 const MAX_RETRIES = 2;
 
 export class DownloadManager {
   constructor(concurrency = 3) {
     this.concurrency = concurrency;
     this.pending = [];
-    this.active = new Map(); // downloadId -> task
-    this.processing = new Map(); // blobUrl -> task (for start-up race condition)
+    this.active = new Map();
+    this.processing = new Map();
     this.completed = [];
     this.failed = [];
 
-    // Bind the listener method so we can remove it if needed (though here we keep it)
     this.handleDelta = this.handleDelta.bind(this);
     chrome.downloads.onChanged.addListener(this.handleDelta);
 
-    // Add listener to enforce filenames for Blob URLs which might be ignored by download()
     chrome.downloads.onDeterminingFilename.addListener((item, suggest) => {
-      // Check active tasks
       for (const task of this.active.values()) {
         if (task.blobUrl === item.url) {
           suggestFilename(task, item.url, suggest);
           return true;
         }
       }
-      // Check processing tasks (not yet in active)
       if (this.processing.has(item.url)) {
         suggestFilename(this.processing.get(item.url), item.url, suggest);
         return true;
       }
-
-      // Not our download
       suggest();
     });
 
@@ -40,10 +36,24 @@ export class DownloadManager {
       const { resource, options } = task;
       const opts = buildDownloadOptions(resource, options, url);
       logger.info(`[WPD] Enforcing filename via listener: ${opts.filename}`);
-      suggest({ filename: opts.filename, conflictAction: 'uniquify' });
+      suggest({ filename: opts.filename, conflictAction: opts.conflictAction });
     };
 
     logger.info('DownloadManager initialized, concurrency:', concurrency);
+
+    loadBasePathFromStorage().catch(err => {
+      logger.warn('Failed to load base path, using default:', err?.message || err);
+    });
+
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== 'local' || !changes[STORAGE_KEYS.SETTINGS]) return;
+      const next = changes[STORAGE_KEYS.SETTINGS].newValue || {};
+      const nextPath = normalizeBasePath(next.basePath);
+      if (nextPath !== basePathCache) {
+        basePathCache = nextPath;
+        logger.info('Base path updated:', basePathCache);
+      }
+    });
   }
 
   setConcurrency(value) {
@@ -83,13 +93,8 @@ export class DownloadManager {
     logger.info(`Starting download attempt ${task.attempts} for: ${resource.url}`);
 
     try {
-      // Step 1: Get Blob URL via Offscreen Document (supports large files & custom filename)
       const blobUrl = await getBlobUrlFromOffscreen(resource.url);
-
-      // Store blobUrl for cleanup
       task.blobUrl = blobUrl;
-
-      // Track in processing map for onDeterminingFilename
       this.processing.set(blobUrl, task);
 
       const downloadOptions = buildDownloadOptions(resource, options, blobUrl);
@@ -112,7 +117,7 @@ export class DownloadManager {
       this.active.set(downloadId, task);
 
     } catch (error) {
-      this.processing.delete(task.blobUrl); // Ensure clean up
+      this.processing.delete(task.blobUrl);
       logger.error(`Start task failed for ${resource.url}: ${error.message}`);
       this.handleTaskFailure(task, error);
     }
@@ -188,7 +193,6 @@ export class DownloadManager {
   }
 }
 
-// Ensure offscreen document exists (Singleton pattern)
 let creatingOffscreen;
 async function setupOffscreen() {
   if (await chrome.offscreen.hasDocument()) return;
@@ -230,7 +234,7 @@ async function getBlobUrlFromOffscreen(url) {
     } catch (err) {
       if (i === maxRetries) throw err;
       logger.warn(`Retrying offscreen fetch... (${i + 1}/${maxRetries})`);
-      await new Promise(r => setTimeout(r, 500)); // Wait a bit
+      await new Promise(r => setTimeout(r, 500));
     }
   }
 }
@@ -245,7 +249,7 @@ function buildDownloadOptions(resource, options = {}, blobUrl = null) {
   const subfolder = buildSubfolder(subfolderType, userName);
 
   return {
-    url: blobUrl || resource.url, // Use blobUrl if available, otherwise original URL
+    url: blobUrl || resource.url,
     filename: `${subfolder}/${filename}`,
     saveAs: false,
     conflictAction: overwrite ? 'overwrite' : 'uniquify'
@@ -254,12 +258,31 @@ function buildDownloadOptions(resource, options = {}, blobUrl = null) {
 
 function buildSubfolder(type, name) {
   const safeName = sanitizePathSegment(name || 'unknown');
+  const basePath = normalizeBasePath(basePathCache);
   if (type === 'supertopic') {
-    return `${BASE_FOLDER}/supertopic/${safeName}`;
+    return `${basePath}/supertopic/${safeName}`;
   }
-  return `${BASE_FOLDER}/${safeName}`;
+  return `${basePath}/${safeName}`;
 }
 
 function sanitizePathSegment(name) {
   return (name || '').replace(/[<>:"/\\|?*\n\r]+/g, '_').trim() || 'unknown';
+}
+
+function sanitizeBasePathSegment(name) {
+  return (name || '').replace(/[<>:"|?*\n\r]+/g, '_').trim();
+}
+
+function normalizeBasePath(input) {
+  const raw = (input || '').trim();
+  if (!raw) return DEFAULT_BASE_PATH;
+  const parts = raw.split(/[\\/]+/).map(sanitizeBasePathSegment).filter(Boolean);
+  return parts.length ? parts.join('/') : DEFAULT_BASE_PATH;
+}
+
+async function loadBasePathFromStorage() {
+  const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS);
+  const settings = data[STORAGE_KEYS.SETTINGS] || DEFAULT_SETTINGS;
+  basePathCache = normalizeBasePath(settings.basePath);
+  logger.info('Base path loaded:', basePathCache);
 }

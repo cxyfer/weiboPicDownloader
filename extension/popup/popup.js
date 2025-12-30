@@ -8,12 +8,14 @@ const taskList = $('task-list');
 const form = $('task-form');
 const settingsForm = $('settings-form');
 const concurrencyInput = $('concurrency-input');
+const basePathInput = $('base-path-input');
+const nameTemplateInput = $('name-template-input');
+const dateStartInput = $('date-start');
+const dateEndInput = $('date-end');
+const autoDownloadCheckbox = $('auto-download-checkbox');
 const settingsStatus = $('settings-status');
-const logsContainer = $('logs-container');
-const btnRefreshLogs = $('btn-refresh-logs');
-const btnClearLogs = $('btn-clear-logs');
 
-const state = { tasks: [], expanded: {}, debugExpanded: {}, logs: [] };
+const state = { tasks: [], expanded: {}, debugExpanded: {} };
 const STATUS_TEXT = {
   pending: '等待中',
   fetching: '讀取中',
@@ -26,15 +28,6 @@ const STATUS_TEXT = {
 
 tabs.forEach(tab => tab.addEventListener('click', () => switchTab(tab.dataset.target)));
 
-// Logs handlers
-btnRefreshLogs?.addEventListener('click', fetchLogs);
-btnClearLogs?.addEventListener('click', async () => {
-  if (confirm('確定要清除所有日誌嗎？')) {
-    await chrome.runtime.sendMessage({ type: 'CLEAR_LOGS' });
-    fetchLogs();
-  }
-});
-
 form.addEventListener('submit', async e => {
   e.preventDefault();
   const url = $('url-input').value.trim();
@@ -45,12 +38,7 @@ form.addEventListener('submit', async e => {
 
   const payload = {
     url,
-    video: $('video-checkbox').checked,
-    dateRange: {
-      start: $('date-start').value || null,
-      end: $('date-end').value || null
-    },
-    nameTemplate: $('name-template').value.trim() || '{date}_{name}'
+    video: $('video-checkbox').checked
   };
 
   setStatus('送出中...');
@@ -73,12 +61,6 @@ chrome.runtime.onMessage.addListener(msg => {
     upsertTask(msg.task);
     renderTasks();
   }
-  if (msg?.type === 'LOG_ENTRY' && msg.entry) {
-    state.logs.unshift(msg.entry);
-    if (document.querySelector('#tab-logs.active')) {
-      renderLogs();
-    }
-  }
 });
 
 function switchTab(targetId) {
@@ -88,10 +70,6 @@ function switchTab(targetId) {
     tab.setAttribute('aria-selected', active);
   });
   panels.forEach(panel => panel.classList.toggle('active', panel.id === targetId));
-
-  if (targetId === 'tab-logs') {
-    fetchLogs();
-  }
 }
 
 async function checkLogin() {
@@ -104,36 +82,6 @@ async function checkLogin() {
     loginStatus.textContent = '無法檢查';
     loginStatus.className = 'warn';
   }
-}
-
-async function fetchLogs() {
-  try {
-    const logs = await chrome.runtime.sendMessage({ type: 'GET_LOGS' });
-    state.logs = Array.isArray(logs) ? logs : [];
-    renderLogs();
-  } catch (err) {
-    logsContainer.innerHTML = `<p class="muted">無法讀取日誌: ${err.message}</p>`;
-  }
-}
-
-function renderLogs() {
-  if (!state.logs.length) {
-    logsContainer.innerHTML = '<p class="muted">暫無日誌。</p>';
-    return;
-  }
-
-  const html = state.logs.map(log => {
-    const date = new Date(log.ts).toLocaleTimeString();
-    return `
-      <div class="log-entry">
-        <span class="log-ts">[${date}]</span>
-        <span class="log-level ${log.level}">${log.level}</span>
-        <span class="log-msg">${escapeHtml(log.msg)}</span>
-      </div>
-    `;
-  }).join('');
-
-  logsContainer.innerHTML = html;
 }
 
 async function refreshTasks() {
@@ -168,11 +116,12 @@ function renderTasks() {
         ? `已取得 ${stats.total} 項，請確認`
         : `${stats.done}/${stats.total}，失敗 ${stats.failed}`;
       const preview = task.status === 'ready' ? renderPreview(task) : '';
+      const targetName = task.meta?.targetName || '';
 
       return `
         <div class="task-card" data-id="${task.id}">
           <div class="task-head">
-            <div class="task-url" title="${task.url}">${task.url || '未知'}</div>
+            <div class="task-url" title="${escapeHtml(task.url)}">${escapeHtml(targetName || task.url || '未知')}</div>
             <span class="${badge}">${STATUS_TEXT[task.status] || task.status}</span>
           </div>
           <div class="task-meta">
@@ -184,7 +133,7 @@ function renderTasks() {
             ${renderActions(task)}
           </div>
           ${preview}
-          ${task.message ? `<p class="task-msg muted">${task.message}</p>` : ''}
+          ${task.message ? `<p class="task-msg muted">${escapeHtml(task.message)}</p>` : ''}
         </div>
       `;
     }).join('');
@@ -204,24 +153,20 @@ function renderTasks() {
 
   taskList.querySelectorAll('[data-confirm]').forEach(btn => {
     btn.addEventListener('click', () => {
-      console.log('Confirm button clicked', btn.dataset.confirm);
       const taskId = btn.dataset.confirm;
       const card = btn.closest('.task-card');
       const checkboxes = card.querySelectorAll('.url-item input[type="checkbox"]');
 
       let selected;
       if (checkboxes.length === 0) {
-        // 預覽未展開，下載全部
         selected = [];
       } else {
-        // 預覽已展開，根據勾選決定
         selected = getSelectedIndexes(card);
         if (!selected.length) {
           setStatus('請至少選擇一個資源', true);
           return;
         }
       }
-      console.log('Selected indexes:', selected);
       sendConfirmDownload(taskId, selected);
     });
   });
@@ -267,11 +212,9 @@ function renderActions(task) {
   }
   if (['pending', 'fetching', 'downloading'].includes(task.status)) {
     btns.push(`<button class="btn" data-action="PAUSE_TASK">暫停</button>`);
-  }
-  if (['paused', 'failed'].includes(task.status)) {
+    btns.push(`<button class="btn ghost" data-action="CANCEL_TASK">取消</button>`);
+  } else if (['paused', 'failed'].includes(task.status)) {
     btns.push(`<button class="btn" data-action="RESUME_TASK">繼續</button>`);
-  }
-  if (!['completed'].includes(task.status)) {
     btns.push(`<button class="btn ghost" data-action="CANCEL_TASK">取消</button>`);
   }
   if (task.stats?.failed > 0) {
@@ -425,14 +368,23 @@ refreshTasks();
 loadSettings();
 setInterval(refreshTasks, 5000);
 
-// Settings handlers
 settingsForm.addEventListener('submit', async e => {
   e.preventDefault();
-  const concurrency = parseInt(concurrencyInput.value, 10) || 3;
+  const settings = {
+    concurrency: parseInt(concurrencyInput.value, 10) || 3,
+    basePath: basePathInput.value.trim() || 'weiboPic',
+    nameTemplate: nameTemplateInput.value.trim() || '{date}_{name}',
+    dateRange: {
+      start: dateStartInput.value || null,
+      end: dateEndInput.value || null
+    },
+    autoDownload: autoDownloadCheckbox.checked
+  };
+
   try {
     const res = await chrome.runtime.sendMessage({
       type: 'UPDATE_SETTINGS',
-      payload: { concurrency }
+      payload: settings
     });
     if (res?.ok) {
       setSettingsStatus('設定已儲存');
@@ -449,6 +401,13 @@ async function loadSettings() {
     const res = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
     if (res?.ok && res.data) {
       concurrencyInput.value = res.data.concurrency || 3;
+      basePathInput.value = res.data.basePath || 'weiboPic';
+      nameTemplateInput.value = res.data.nameTemplate || '{date}_{name}';
+      autoDownloadCheckbox.checked = !!res.data.autoDownload;
+      if (res.data.dateRange) {
+        dateStartInput.value = res.data.dateRange.start || '';
+        dateEndInput.value = res.data.dateRange.end || '';
+      }
     }
   } catch (err) {
     console.error('Failed to load settings:', err);

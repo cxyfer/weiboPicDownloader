@@ -5,6 +5,8 @@ import { DownloadManager } from './downloads.js';
 import { sanitizeFilename } from './naming.js';
 import { logger } from './logger.js';
 
+const debug = (...args) => logger.info('[DEBUG]', ...args);
+
 const TASK_STATUS = {
   PENDING: 'pending',
   FETCHING: 'fetching',
@@ -73,6 +75,7 @@ const REFERER_RULES = [
 
 async function setupRefererRule() {
   const ruleIds = REFERER_RULES.map(rule => rule.id);
+  debug('Setting referer rules', ruleIds);
   try {
     await chrome.declarativeNetRequest.updateSessionRules({
       removeRuleIds: ruleIds,
@@ -87,6 +90,7 @@ async function setupRefererRule() {
 chrome.runtime.onInstalled.addListener(async () => {
   await logger.init();
   logger.info('Extension installed/updated');
+  debug('onInstalled: init defaults');
   await ensureDefaults();
   await setupRefererRule();
   await loadConcurrency();
@@ -97,6 +101,7 @@ chrome.runtime.onInstalled.addListener(async () => {
 chrome.runtime.onStartup.addListener(async () => {
   await logger.init();
   logger.info('Extension startup');
+  debug('onStartup: load tasks');
   await ensureDefaults();
   await setupRefererRule();
   await loadTasks();
@@ -104,6 +109,7 @@ chrome.runtime.onStartup.addListener(async () => {
 });
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  debug('Message received', msg?.type);
   const handler = handlers[msg?.type];
   if (!handler) {
     sendResponse({ ok: false, error: 'Unknown type' });
@@ -141,12 +147,14 @@ const handlers = {
     return data[STORAGE_KEYS.SETTINGS] || DEFAULT_SETTINGS;
   },
   UPDATE_SETTINGS: async (payload) => {
+    debug('Update settings payload', payload);
     const current = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS);
     const settings = { ...(current[STORAGE_KEYS.SETTINGS] || DEFAULT_SETTINGS), ...payload };
     await chrome.storage.local.set({ [STORAGE_KEYS.SETTINGS]: settings });
     if (typeof payload.concurrency === 'number') {
       downloadManager.setConcurrency(payload.concurrency);
     }
+    debug('Settings updated', settings);
     logger.info('Settings updated:', settings);
     return settings;
   },
@@ -159,9 +167,15 @@ const handlers = {
   }
 };
 
+async function getSettings() {
+  const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS);
+  return { ...DEFAULT_SETTINGS, ...(data[STORAGE_KEYS.SETTINGS] || {}) };
+}
+
 async function ensureDefaults() {
   const saved = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS);
   if (!saved?.[STORAGE_KEYS.SETTINGS]) {
+    debug('Seeding default settings');
     await chrome.storage.local.set({ [STORAGE_KEYS.SETTINGS]: DEFAULT_SETTINGS });
   }
 }
@@ -171,6 +185,7 @@ async function loadConcurrency() {
   const settings = data[STORAGE_KEYS.SETTINGS] || DEFAULT_SETTINGS;
   downloadManager.setConcurrency(settings.concurrency || DEFAULT_SETTINGS.concurrency);
   console.log('[WPD] Loaded concurrency:', settings.concurrency);
+  debug('Loaded concurrency', settings.concurrency);
 }
 
 async function loadTasks() {
@@ -184,6 +199,7 @@ async function loadTasks() {
   });
   state.tasks = tasks;
   await persistTasks();
+  debug('Loaded tasks', { count: tasks.length });
 }
 
 async function persistTasks() {
@@ -195,11 +211,17 @@ function findTask(taskId) {
 }
 
 async function startTask(payload = {}) {
+  const settings = await getSettings();
   const url = payload.url?.trim();
   if (!url) throw new Error('請提供有效網址');
 
   const parsed = parseWeiboUrl(url);
   if (!parsed) throw new Error('無法解析網址');
+
+  debug('Start task', { url, parsed, autoDownload: settings.autoDownload });
+
+  const nameTemplate = settings.nameTemplate || DEFAULT_SETTINGS.nameTemplate;
+  const dateRange = settings.dateRange || DEFAULT_SETTINGS.dateRange;
 
   const task = {
     id: crypto.randomUUID(),
@@ -208,9 +230,10 @@ async function startTask(payload = {}) {
     parsed,
     options: {
       video: !!payload.video,
-      nameTemplate: payload.nameTemplate || DEFAULT_SETTINGS.nameTemplate,
-      dateRange: payload.dateRange || { start: null, end: null },
-      overwrite: !!payload.overwrite
+      nameTemplate,
+      dateRange,
+      overwrite: !!payload.overwrite,
+      autoDownload: !!settings.autoDownload
     },
     status: TASK_STATUS.PENDING,
     createdAt: Date.now(),
@@ -225,20 +248,33 @@ async function startTask(payload = {}) {
   broadcast(task);
 
   runTask(task).catch(err => setTaskStatus(task, TASK_STATUS.FAILED, err?.message));
+  debug('Task queued', { taskId: task.id, type: task.type });
   return { taskId: task.id };
 }
 
 async function runTask(task) {
-  if (!task || task.status === TASK_STATUS.PAUSED) return;
+  if (!task || task.status === TASK_STATUS.PAUSED) {
+    debug('runTask skipped', { taskId: task?.id, status: task?.status });
+    return;
+  }
   await setTaskStatus(task, TASK_STATUS.FETCHING, '正在取得資源...');
+  debug('Fetching resources', { taskId: task.id, type: task.type });
 
   const result = await fetchResources(task);
   task.resources = result.resources;
   task.meta = result.meta;
   task.stats.total = task.resources.length;
+  debug('Resources fetched', { taskId: task.id, total: task.resources.length, meta: task.meta });
 
   if (!task.resources.length) {
     await setTaskStatus(task, TASK_STATUS.FAILED, '找不到可下載的資源');
+    return;
+  }
+
+  if (task.options.autoDownload) {
+    debug('Auto-download enabled', { taskId: task.id, total: task.resources.length });
+    await setTaskStatus(task, TASK_STATUS.DOWNLOADING, '自動下載中');
+    enqueueResources(task);
     return;
   }
 
@@ -254,13 +290,20 @@ async function fetchResources(task) {
   if (task.type === 'user') {
     const uid = task.parsed.uid || (task.parsed.nickname ? await nicknameToUid(task.parsed.nickname) : null);
     if (!uid) throw new Error('無法解析 UID');
+    debug('Resolved UID', { uid, nickname: task.parsed.nickname });
+
     const result = await fetchUserFeed(uid, opts);
+    // Fallback order: username → nickname → uid_{uid}
+    const targetName = result.username || task.parsed.nickname || `uid_${uid}`;
+    debug('User feed fetched', { uid, username: result.username, targetName, count: result.resources.length });
+
     return {
       resources: result.resources.map((r, i) => ({ ...r, _taskId: task.id, index: r.index || i + 1 })),
       meta: {
         uid,
+        username: result.username,
         containerid: result.containerid,
-        targetName: task.parsed.nickname || `uid_${uid}`,
+        targetName,
         containerUrls: result.containerUrls || []
       }
     };
@@ -269,6 +312,7 @@ async function fetchResources(task) {
   if (task.type === 'supertopic') {
     const { containerid } = task.parsed;
     if (!containerid) throw new Error('缺少 containerid');
+    debug('Fetching supertopic feed', { containerid });
     const result = await fetchSupertopicFeed(containerid, opts);
     return {
       resources: result.resources.map((r, i) => ({ ...r, _taskId: task.id, index: r.index || i + 1 })),
@@ -279,6 +323,7 @@ async function fetchResources(task) {
   if (task.type === 'post') {
     const mid = task.parsed.mid || bidToMid(task.parsed.bid);
     if (!mid) throw new Error('無法解析微博 ID');
+    debug('Fetching single post', { mid });
     const result = await fetchSinglePost(mid, opts);
     return {
       resources: (result.resources || []).map((r, i) => ({ ...r, _taskId: task.id, index: r.index || i + 1 })),
@@ -295,6 +340,12 @@ function enqueueResources(task, selectedIndexes) {
   const allowed = Array.isArray(selectedIndexes) && selectedIndexes.length
     ? new Set(selectedIndexes.map(Number))
     : null;
+
+  debug('Enqueue resources', {
+    taskId: task.id,
+    total: task.resources.length,
+    selected: allowed ? allowed.size : task.resources.length
+  });
 
   task.resources.forEach(res => {
     if (res._state === 'completed' || res._enqueued) return;
@@ -313,6 +364,7 @@ async function confirmDownload(taskId, selectedIndexes) {
   const task = findTask(taskId);
   if (!task) throw new Error('任務不存在');
   if (task.status !== TASK_STATUS.READY) throw new Error('任務狀態錯誤，無法確認下載');
+  debug('Confirm download', { taskId, selectedIndexes });
 
   const selected = Array.isArray(selectedIndexes) && selectedIndexes.length
     ? selectedIndexes : task.resources.map(r => r.index);
@@ -326,6 +378,7 @@ async function confirmDownload(taskId, selectedIndexes) {
 async function pauseTask(taskId) {
   const task = findTask(taskId);
   if (!task) throw new Error('任務不存在');
+  debug('Pause task', { taskId });
   await setTaskStatus(task, TASK_STATUS.PAUSED, '已暫停');
   return task;
 }
@@ -334,6 +387,7 @@ async function resumeTask(taskId) {
   const task = findTask(taskId);
   if (!task) throw new Error('任務不存在');
   if (task.status !== TASK_STATUS.PAUSED && task.status !== TASK_STATUS.FAILED) return task;
+  debug('Resume task', { taskId, status: task.status });
 
   if (!task.resources.length) {
     runTask(task).catch(err => setTaskStatus(task, TASK_STATUS.FAILED, err?.message));
@@ -350,12 +404,14 @@ async function cancelTask(taskId) {
   if (idx === -1) throw new Error('任務不存在');
   state.tasks.splice(idx, 1);
   await persistTasks();
+  debug('Cancel task', { taskId });
   return { removed: true };
 }
 
 async function retryFailed(taskId) {
   const task = findTask(taskId);
   if (!task) throw new Error('任務不存在');
+  debug('Retry failed', { taskId });
 
   task.resources.forEach(res => {
     if (res._state === 'failed') {
@@ -375,6 +431,7 @@ async function setTaskStatus(task, status, message) {
   task.updatedAt = Date.now();
   await persistTasks();
   broadcast(task);
+  debug('Task status updated', { taskId: task.id, status, message });
 }
 
 function refreshProgress() {
@@ -391,11 +448,16 @@ function refreshProgress() {
 
     const done = task.resources.filter(r => r._state === 'completed').length;
     const failed = task.resources.filter(r => r._state === 'failed').length;
-    task.stats = { total: task.resources.length, done, failed };
+    const enqueued = task.resources.filter(r => r._enqueued).length;
 
-    if (task.status === TASK_STATUS.DOWNLOADING && done + failed >= task.stats.total) {
+    // Use enqueued count as total if partial selection was made
+    const total = enqueued > 0 ? enqueued : task.resources.length;
+    task.stats = { total, done, failed };
+
+    if (task.status === TASK_STATUS.DOWNLOADING && done + failed >= total) {
       task.status = failed > 0 ? TASK_STATUS.FAILED : TASK_STATUS.COMPLETED;
       task.message = task.status === TASK_STATUS.COMPLETED ? '已完成' : '部分失敗';
+      debug('Task finished', { taskId: task.id, status: task.status, done, failed });
       broadcast(task);
     }
   });
@@ -424,6 +486,7 @@ async function checkLogin() {
     chrome.cookies.getAll({ domain: 'weibo.com', name: 'SUB' }),
     chrome.cookies.getAll({ domain: 'm.weibo.cn', name: 'SUB' })
   ]);
+  debug('Check login', { desktop: desktop.length, mobile: mobile.length });
   return {
     loggedIn: desktop.length > 0 || mobile.length > 0,
     desktop: desktop.length > 0,
@@ -435,8 +498,10 @@ async function checkLogin() {
 async function refreshLogin() {
   const status = await checkLogin();
   await chrome.storage.local.set({ [STORAGE_KEYS.LOGIN_STATUS]: status });
+  debug('Login status refreshed', status);
 }
 
 function broadcast(task) {
   chrome.runtime.sendMessage({ type: 'TASK_UPDATED', task }).catch(() => { });
+  debug('Broadcast task update', { taskId: task?.id, status: task?.status });
 }
