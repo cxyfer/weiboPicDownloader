@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Weibo Pic Downloader",
+  "version": "0.1.0",
+  "description": "Download images and videos from Weibo users and supertopics.",
+  "permissions": [
+    "downloads",
+    "storage",
+    "alarms",
+    "cookies",
+    "scripting",
+    "activeTab",
+    "notifications",
+    "declarativeNetRequest",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "https://m.weibo.cn/*",
+    "https://weibo.com/*",
+    "https://*.sinaimg.cn/*",
+    "https://*.weibocdn.com/*",
+    "https://*.miaopai.com/*"
+  ],
+  "background": {
+    "service_worker": "background/worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://m.weibo.cn/*",
+        "https://weibo.com/*"
+      ],
+      "js": ["content/inject.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "Weibo Pic Downloader",
+    "default_popup": "popup/popup.html"
+  }
+}
