@@ -10,7 +10,9 @@ export function parseWeiboUrl(input) {
     return null;
   }
   const host = url.hostname.toLowerCase();
-  const segments = url.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+  const segments = url.pathname.split('/').filter(Boolean).map(s => {
+    try { return decodeURIComponent(s); } catch { return s; }
+  });
 
   if (MOBILE_HOSTS.includes(host)) {
     return parseMobile(url, segments, input);
@@ -72,7 +74,31 @@ function parseDesktop(url, segments, raw) {
 
 function cleanContainerId(raw) {
   if (!raw) return null;
-  const decoded = decodeURIComponent(raw);
+  let decoded;
+  try { decoded = decodeURIComponent(raw); } catch { decoded = raw; }
   const match = decoded.match(/100808[0-9a-zA-Z]+/);
   return match ? match[0] : decoded.split('_')[0] || decoded;
+}
+
+export function parseWeiboInput(input) {
+  if (!input) return null;
+  const value = String(input).trim();
+  if (!value) return null;
+
+  if (/^https?:\/\//i.test(value)) {
+    return parseWeiboUrl(value);
+  }
+  if (/^100808[0-9a-zA-Z]+$/.test(value)) {
+    return { type: 'supertopic', raw: value, containerid: value, source: 'direct' };
+  }
+  if (/^\d+$/.test(value)) {
+    return { type: 'user', raw: value, uid: value, source: 'direct' };
+  }
+  if (value.endsWith('超話') || value.endsWith('超话')) {
+    const keyword = value.slice(0, -2).trim();
+    if (keyword) {
+      return { type: 'supertopic', raw: value, keyword, source: 'direct' };
+    }
+  }
+  return { type: 'user', raw: value, nickname: value, source: 'direct' };
 }

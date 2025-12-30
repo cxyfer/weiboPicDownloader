@@ -23,16 +23,11 @@
 
   <section id="tab-tasks" class="tab-panel active" role="tabpanel">
     <form id="task-form">
-      <label for="url-input">微博連結或使用者/超話</label>
-      <input id="url-input" name="url" type="text" placeholder="https://weibo.com/u/123456" required>
-
-      <details class="advanced">
-        <summary>進階設定</summary>
-        <label class="checkbox">
-          <input id="video-checkbox" type="checkbox" name="video">
-          <span>同時下載影片</span>
-        </label>
-      </details>
+      <label for="url-input">微博連結 / 用戶名 / 超話名稱 / ContainerID</label>
+      <div class="input-wrapper">
+        <input id="url-input" name="url" type="text" placeholder="輸入網址、用戶名、超話名稱或 ContainerID" required>
+        <button id="auto-fill-btn" class="btn btn-icon" type="button" title="填入目前網址" aria-label="填入目前網址">📋</button>
+      </div>
 
       <button id="start-btn" type="submit">開始下載</button>
     </form>
@@ -49,30 +44,42 @@
   <section id="tab-settings" class="tab-panel" role="tabpanel">
     <form id="settings-form">
       <div class="field-group">
-        <label for="base-path-input">下載資料夾路徑</label>
-        <input id="base-path-input" type="text" value="weiboPic">
-        <small class="hint">支援巢狀路徑，如 downloads/weibo/pics</small>
+        <label class="checkbox">
+          <input id="video-checkbox" type="checkbox" name="video">
+          <span>同時下載影片</span>
+        </label>
       </div>
 
       <div class="field-group">
-        <label>預設日期區間</label>
+        <label>日期區間</label>
         <div class="date-range">
-          <input id="date-start" type="date" name="date-start">
+          <input id="date-start" type="date" name="date-start" aria-label="起始日期">
           <span class="separator">–</span>
-          <input id="date-end" type="date" name="date-end">
+          <input id="date-end" type="date" name="date-end" aria-label="結束日期">
         </div>
       </div>
 
       <div class="field-group">
-        <label for="name-template-input">檔名模板</label>
-        <input id="name-template-input" type="text" value="{date}_{name}">
-        <small class="hint">可用欄位：{date}、{name}、{id}、{index}、{username}</small>
+        <label>頁數範圍 (0 = 不限)</label>
+        <div class="range-inputs">
+          <input id="page-start-input" type="number" min="1" placeholder="起始頁" value="1" aria-label="起始頁">
+          <span class="separator">–</span>
+          <input id="page-end-input" type="number" min="0" placeholder="結束頁" value="0" aria-label="結束頁">
+        </div>
       </div>
 
       <div class="field-group">
-        <label for="concurrency-input">同時下載數量</label>
-        <input id="concurrency-input" type="number" min="1" max="10" value="3">
-        <small class="hint">建議 1-5，過高可能被微博限制</small>
+        <label for="user-path-input">用戶下載路徑</label>
+        <input id="user-path-input" type="text" class="code-input" value="weiboPic/{nickname}/{date:yyyy-MM-dd}_{filename}{ext}">
+      </div>
+
+      <div class="field-group">
+        <label for="supertopic-path-input">超話下載路徑</label>
+        <input id="supertopic-path-input" type="text" class="code-input" value="weiboPic/SuperTopic/{nickname}/{date:yyyy-MM-dd}_{filename}{ext}">
+      </div>
+
+      <div class="info-box">
+        <strong>可用變數：</strong>{nickname} {filename} {ext} {id} {date} {date:yyyy-MM-dd}
       </div>
 
       <div class="field-group">
@@ -81,6 +88,25 @@
           <span>自動下載（跳過確認步驟）</span>
         </label>
       </div>
+
+      <details class="advanced-settings">
+        <summary>進階參數</summary>
+        <div class="advanced-content">
+          <div class="field-group">
+            <label for="concurrency-input">同時下載數</label>
+            <input id="concurrency-input" type="number" min="1" max="10" value="3">
+            <small class="hint">建議 1-5</small>
+          </div>
+          <div class="field-group">
+            <label for="interval-page-input">翻頁間隔 (秒)</label>
+            <input id="interval-page-input" type="number" min="0" step="0.5" value="1">
+          </div>
+          <div class="field-group">
+            <label for="interval-download-input">下載間隔 (秒)</label>
+            <input id="interval-download-input" type="number" min="0" step="0.1" value="0">
+          </div>
+        </div>
+      </details>
 
       <button type="submit" class="btn-save">儲存設定</button>
       <p id="settings-status" class="muted"></p>

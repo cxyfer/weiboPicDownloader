@@ -15,16 +15,18 @@ export const API_ENDPOINTS = Object.freeze({
 
 export const DEFAULT_SETTINGS = Object.freeze({
   video: false,
-  pages: 0,
-  interval: 1,
+  pageStart: 1,
+  pageEnd: 0,
+  intervalPage: 1,
+  intervalDownload: 0,
   retry: 2,
   concurrency: 3,
   maxConcurrency: 10,
-  basePath: 'weiboPic',
   autoDownload: false,
-  nameTemplate: '{date}_{name}',
   dateRange: { start: null, end: null },
-  overwrite: false
+  overwrite: false,
+  pathTemplateUser: 'weiboPic/{nickname}/{date:yyyy-MM-dd}_{filename}{ext}',
+  pathTemplateSupertopic: 'weiboPic/SuperTopic/{nickname}/{date:yyyy-MM-dd}_{filename}{ext}'
 });
 
 export const STORAGE_KEYS = Object.freeze({

@@ -449,3 +449,93 @@ button[type="submit"]:hover {
 .field-group {
   margin-bottom: 12px;
 }
+
+.input-wrapper {
+  display: flex;
+  gap: 8px;
+}
+
+.input-wrapper input {
+  flex: 1;
+  margin-bottom: 0;
+}
+
+.btn-icon {
+  padding: 8px 10px;
+  font-size: 14px;
+  min-width: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+.btn-icon:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+.range-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.range-inputs input {
+  width: 80px;
+  margin-bottom: 0;
+  text-align: center;
+}
+
+.info-box {
+  background: var(--accent-soft);
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  margin-bottom: 12px;
+  font-size: 11px;
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.code-input {
+  font-family: monospace;
+  font-size: 11px;
+}
+
+.advanced-settings {
+  margin-bottom: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: #f9fafb;
+}
+
+.advanced-settings summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.advanced-content {
+  margin-top: 10px;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 8px;
+}
+
+.advanced-content .field-group {
+  margin-bottom: 0;
+}
+
+.advanced-content label {
+  font-size: 11px;
+}
+
+.advanced-content input {
+  padding: 6px 8px;
+  font-size: 12px;
+}

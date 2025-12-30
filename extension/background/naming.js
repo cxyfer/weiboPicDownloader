@@ -13,23 +13,32 @@ export function sanitizeFilename(name) {
   return cleaned.slice(0, MAX_LENGTH);
 }
 
-export function formatFilename(resource, template = '{date}_{name}', userName = '') {
+export function formatPath(resource, template = '{date:yyyy-MM-dd}_{filename}{ext}', context = {}) {
+  const { nickname = '', id = '' } = context;
   const urlPath = safeUrlPath(resource.url);
-  const filename = urlPath?.split('/').pop() || `${resource.mid || 'item'}_${resource.index || 1}.jpg`;
-  const [fileRoot, fileExt] = splitExt(filename);
+  const rawFilename = urlPath?.split('/').pop() || `${resource.mid || 'item'}_${resource.index || 1}.jpg`;
+  const [fileRoot, fileExt] = splitExt(rawFilename);
+  const dateInput = resource?.date || Date.now();
 
-  const map = {
-    name: fileRoot,
-    date: formatDate(resource.date),
-    id: resource.mid || resource.id || '',
-    index: padIndex(resource.index),
-    type: resource.type || '',
-    text: truncateText(stripHtml(resource.text || '')),
-    username: userName
-  };
+  const resolved = String(template || '').replace(/{([^}]+)}/g, (_, token) => {
+    if (token.startsWith('date:')) {
+      return safeValue(formatDate(dateInput, token.slice(5)));
+    }
+    if (token === 'date') return safeValue(formatDate(dateInput));
+    if (token === 'nickname') return safeValue(nickname);
+    if (token === 'filename') return safeValue(fileRoot);
+    if (token === 'ext') return safeValue(fileExt);
+    if (token === 'id') return safeValue(id || resource?.mid || resource?.id || '');
+    return '';
+  });
 
-  const resolved = template.replace(/{(\w+)}/g, (_, key) => safeValue(map[key]));
-  return sanitizeFilename(resolved) + fileExt;
+  return sanitizePath(resolved);
+}
+
+function sanitizePath(path) {
+  if (!path) return '';
+  const parts = String(path).split(/[\\/]+/).filter(Boolean);
+  return parts.map(part => sanitizeFilename(part)).filter(Boolean).join('/');
 }
 
 function safeUrlPath(url) {
@@ -46,21 +55,18 @@ function splitExt(filename) {
   return [filename.slice(0, lastDot), filename.slice(lastDot)];
 }
 
-function formatDate(dateInput) {
-  const date = dateInput instanceof Date ? dateInput : new Date(dateInput || Date.now());
-  return date.toISOString().split('T')[0];
-}
-
-function padIndex(idx) {
-  return String(Number.isFinite(idx) ? idx : 1).padStart(2, '0');
-}
-
-function stripHtml(text) {
-  return text.replace(/<[^>]+>/g, '');
-}
-
-function truncateText(text, limit = 50) {
-  return text.length > limit ? text.slice(0, limit) : text;
+function formatDate(dateInput, format = 'yyyy-MM-dd') {
+  const rawDate = dateInput instanceof Date ? dateInput : new Date(dateInput || Date.now());
+  const date = Number.isNaN(rawDate.getTime()) ? new Date() : rawDate;
+  const parts = {
+    yyyy: String(date.getFullYear()),
+    MM: String(date.getMonth() + 1).padStart(2, '0'),
+    dd: String(date.getDate()).padStart(2, '0'),
+    HH: String(date.getHours()).padStart(2, '0'),
+    mm: String(date.getMinutes()).padStart(2, '0'),
+    ss: String(date.getSeconds()).padStart(2, '0')
+  };
+  return String(format || 'yyyy-MM-dd').replace(/yyyy|MM|dd|HH|mm|ss/g, match => parts[match] || '');
 }
 
 function safeValue(val) {

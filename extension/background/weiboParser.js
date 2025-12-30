@@ -24,18 +24,39 @@ export async function uidToContainerId(uid) {
   return `107603${uid}`;
 }
 
+export async function searchSupertopic(keyword) {
+  if (!keyword) return null;
+  const encoded = encodeURIComponent(keyword);
+  const url = `https://m.weibo.cn/api/container/getIndex?containerid=100103type%3D98%26q%3D${encoded}&page_type=searchall`;
+  const { data } = await apiFetch(url);
+  const cards = data?.data?.cards || [];
+
+  for (const card of cards) {
+    const group = Array.isArray(card?.card_group) ? card.card_group : [];
+    for (const item of group) {
+      const scheme = item?.scheme || '';
+      const match = String(scheme).match(/100808[0-9a-zA-Z]+/);
+      if (match) {
+        const supertopicName = item?.title_sub || item?.title || item?.desc1 || keyword;
+        return { containerid: match[0], supertopicName };
+      }
+    }
+  }
+  return null;
+}
+
 export async function fetchUserFeed(uid, options = {}) {
-  const { video = false, pages = 0, interval = 1, dateRange } = options;
+  const { video = false, pageStart = 1, pageEnd = 0, intervalPage = 1, dateRange } = options;
   const limit = normalizeLimit(dateRange);
   const containerid = await uidToContainerId(uid);
   const resources = [];
   const containerUrls = [];
   let username = null;
-  let page = 1;
+  let page = Math.max(1, pageStart);
   let emptyCount = 0;
   let finish = false;
 
-  while (!finish && emptyCount < 3 && (pages === 0 || page <= pages)) {
+  while (!finish && emptyCount < 3 && (pageEnd === 0 || page <= pageEnd)) {
     const url = buildUrl(API_ENDPOINTS.CONTAINER, { containerid, page });
     containerUrls.push(url);
     const { data } = await apiFetch(url);
@@ -82,23 +103,23 @@ export async function fetchUserFeed(uid, options = {}) {
     }
 
     page++;
-    if (interval > 0) await wait(interval * 1000);
+    if (intervalPage > 0) await wait(intervalPage * 1000);
   }
 
   return { containerid, resources, containerUrls: containerUrls.slice(-50), username };
 }
 
 export async function fetchSupertopicFeed(containerid, options = {}) {
-  const { video = false, pages = 0, interval = 1, dateRange } = options;
+  const { video = false, pageStart = 1, pageEnd = 0, intervalPage = 1, dateRange } = options;
   const limit = normalizeLimit(dateRange);
   const resources = [];
   const containerUrls = [];
   let supertopicName = null;
-  let page = 1;
+  let page = Math.max(1, pageStart);
   let emptyCount = 0;
   let finish = false;
 
-  while (!finish && emptyCount < 3 && (pages === 0 || page <= pages)) {
+  while (!finish && emptyCount < 3 && (pageEnd === 0 || page <= pageEnd)) {
     const url = buildUrl(API_ENDPOINTS.CONTAINER, { containerid: `${containerid}_-_feed`, page });
     containerUrls.push(url);
     const { data } = await apiFetch(url);
@@ -137,7 +158,7 @@ export async function fetchSupertopicFeed(containerid, options = {}) {
     }
 
     page++;
-    if (interval > 0) await wait(interval * 1000);
+    if (intervalPage > 0) await wait(intervalPage * 1000);
   }
 
   return { containerid, resources, containerUrls: containerUrls.slice(-50), supertopicName };

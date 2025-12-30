@@ -1,14 +1,14 @@
-import { formatFilename } from './naming.js';
+import { formatPath } from './naming.js';
 import { logger } from './logger.js';
 import { DEFAULT_SETTINGS, STORAGE_KEYS } from '../common/constants.js';
 
-const DEFAULT_BASE_PATH = DEFAULT_SETTINGS.basePath || 'weiboPic';
-let basePathCache = DEFAULT_BASE_PATH;
 const MAX_RETRIES = 2;
 
 export class DownloadManager {
   constructor(concurrency = 3) {
     this.concurrency = concurrency;
+    this.intervalDownload = 0;
+    this.lastDownloadTime = 0;
     this.pending = [];
     this.active = new Map();
     this.processing = new Map();
@@ -40,20 +40,6 @@ export class DownloadManager {
     };
 
     logger.info('DownloadManager initialized, concurrency:', concurrency);
-
-    loadBasePathFromStorage().catch(err => {
-      logger.warn('Failed to load base path, using default:', err?.message || err);
-    });
-
-    chrome.storage.onChanged.addListener((changes, area) => {
-      if (area !== 'local' || !changes[STORAGE_KEYS.SETTINGS]) return;
-      const next = changes[STORAGE_KEYS.SETTINGS].newValue || {};
-      const nextPath = normalizeBasePath(next.basePath);
-      if (nextPath !== basePathCache) {
-        basePathCache = nextPath;
-        logger.info('Base path updated:', basePathCache);
-      }
-    });
   }
 
   setConcurrency(value) {
@@ -63,6 +49,11 @@ export class DownloadManager {
       logger.info(`Concurrency updated from ${old} to ${this.concurrency}`);
       this.pump();
     }
+  }
+
+  setIntervalDownload(value) {
+    this.intervalDownload = Math.max(0, Number(value) || 0);
+    logger.info(`IntervalDownload set to ${this.intervalDownload}s`);
   }
 
   enqueue(resource, options = {}) {
@@ -91,6 +82,16 @@ export class DownloadManager {
     task.attempts++;
     const { resource, options } = task;
     logger.info(`Starting download attempt ${task.attempts} for: ${resource.url}`);
+
+    if (this.intervalDownload > 0) {
+      const elapsed = Date.now() - this.lastDownloadTime;
+      const wait = this.intervalDownload * 1000 - elapsed;
+      if (wait > 0) {
+        logger.info(`Waiting ${wait}ms for download interval`);
+        await new Promise(r => setTimeout(r, wait));
+      }
+    }
+    this.lastDownloadTime = Date.now();
 
     try {
       const blobUrl = await getBlobUrlFromOffscreen(resource.url);
@@ -244,45 +245,17 @@ function revokeBlobUrl(url) {
 }
 
 function buildDownloadOptions(resource, options = {}, blobUrl = null) {
-  const { template = '{date}_{name}', userName = '', subfolderType = 'user', overwrite = false } = options;
-  const filename = formatFilename(resource, template, userName);
-  const subfolder = buildSubfolder(subfolderType, userName);
+  const { pathTemplate = DEFAULT_SETTINGS.pathTemplateUser, nickname = '', id = '', overwrite = false } = options;
+  const filename = formatPath(resource, pathTemplate, { nickname, id });
 
   return {
     url: blobUrl || resource.url,
-    filename: `${subfolder}/${filename}`,
+    filename,
     saveAs: false,
     conflictAction: overwrite ? 'overwrite' : 'uniquify'
   };
 }
 
-function buildSubfolder(type, name) {
-  const safeName = sanitizePathSegment(name || 'unknown');
-  const basePath = normalizeBasePath(basePathCache);
-  if (type === 'supertopic') {
-    return `${basePath}/supertopic/${safeName}`;
-  }
-  return `${basePath}/${safeName}`;
-}
-
 function sanitizePathSegment(name) {
   return (name || '').replace(/[<>:"/\\|?*\n\r]+/g, '_').trim() || 'unknown';
-}
-
-function sanitizeBasePathSegment(name) {
-  return (name || '').replace(/[<>:"|?*\n\r]+/g, '_').trim();
-}
-
-function normalizeBasePath(input) {
-  const raw = (input || '').trim();
-  if (!raw) return DEFAULT_BASE_PATH;
-  const parts = raw.split(/[\\/]+/).map(sanitizeBasePathSegment).filter(Boolean);
-  return parts.length ? parts.join('/') : DEFAULT_BASE_PATH;
-}
-
-async function loadBasePathFromStorage() {
-  const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS);
-  const settings = data[STORAGE_KEYS.SETTINGS] || DEFAULT_SETTINGS;
-  basePathCache = normalizeBasePath(settings.basePath);
-  logger.info('Base path loaded:', basePathCache);
 }

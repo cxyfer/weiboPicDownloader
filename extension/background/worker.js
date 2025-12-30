@@ -1,6 +1,6 @@
 import { DEFAULT_SETTINGS, STORAGE_KEYS } from '../common/constants.js';
-import { parseWeiboUrl } from './urlParser.js';
-import { nicknameToUid, fetchUserFeed, fetchSupertopicFeed, fetchSinglePost } from './weiboParser.js';
+import { parseWeiboInput } from './urlParser.js';
+import { nicknameToUid, fetchUserFeed, fetchSupertopicFeed, fetchSinglePost, searchSupertopic } from './weiboParser.js';
 import { apiFetch } from './apiClient.js';
 import { DownloadManager } from './downloads.js';
 import { sanitizeFilename } from './naming.js';
@@ -155,6 +155,9 @@ const handlers = {
     if (typeof payload.concurrency === 'number') {
       downloadManager.setConcurrency(payload.concurrency);
     }
+    if (typeof payload.intervalDownload === 'number') {
+      downloadManager.setIntervalDownload(payload.intervalDownload);
+    }
     debug('Settings updated', settings);
     logger.info('Settings updated:', settings);
     return settings;
@@ -185,8 +188,9 @@ async function loadConcurrency() {
   const data = await chrome.storage.local.get(STORAGE_KEYS.SETTINGS);
   const settings = data[STORAGE_KEYS.SETTINGS] || DEFAULT_SETTINGS;
   downloadManager.setConcurrency(settings.concurrency || DEFAULT_SETTINGS.concurrency);
-  console.log('[WPD] Loaded concurrency:', settings.concurrency);
-  debug('Loaded concurrency', settings.concurrency);
+  downloadManager.setIntervalDownload(settings.intervalDownload || DEFAULT_SETTINGS.intervalDownload);
+  console.log('[WPD] Loaded concurrency:', settings.concurrency, 'intervalDownload:', settings.intervalDownload);
+  debug('Loaded concurrency', settings.concurrency, 'intervalDownload', settings.intervalDownload);
 }
 
 async function loadTasks() {
@@ -213,27 +217,28 @@ function findTask(taskId) {
 
 async function startTask(payload = {}) {
   const settings = await getSettings();
-  const url = payload.url?.trim();
-  if (!url) throw new Error('請提供有效網址');
+  const input = payload.url?.trim();
+  if (!input) throw new Error('請提供有效輸入');
 
-  const parsed = parseWeiboUrl(url);
-  if (!parsed) throw new Error('無法解析網址');
+  const parsed = parseWeiboInput(input);
+  if (!parsed) throw new Error('無法解析輸入');
 
-  debug('Start task', { url, parsed, autoDownload: settings.autoDownload });
-
-  const nameTemplate = settings.nameTemplate || DEFAULT_SETTINGS.nameTemplate;
-  const dateRange = settings.dateRange || DEFAULT_SETTINGS.dateRange;
+  debug('Start task', { input, parsed, autoDownload: settings.autoDownload });
 
   const task = {
     id: crypto.randomUUID(),
-    url,
+    url: input,
     type: parsed.type,
     parsed,
     options: {
-      video: !!payload.video,
-      nameTemplate,
-      dateRange,
-      overwrite: !!payload.overwrite,
+      video: !!settings.video,
+      pageStart: settings.pageStart ?? DEFAULT_SETTINGS.pageStart,
+      pageEnd: settings.pageEnd ?? DEFAULT_SETTINGS.pageEnd,
+      intervalPage: settings.intervalPage ?? DEFAULT_SETTINGS.intervalPage,
+      pathTemplateUser: settings.pathTemplateUser || DEFAULT_SETTINGS.pathTemplateUser,
+      pathTemplateSupertopic: settings.pathTemplateSupertopic || DEFAULT_SETTINGS.pathTemplateSupertopic,
+      dateRange: settings.dateRange || DEFAULT_SETTINGS.dateRange,
+      overwrite: !!settings.overwrite,
       autoDownload: !!settings.autoDownload
     },
     status: TASK_STATUS.PENDING,
@@ -285,6 +290,9 @@ async function runTask(task) {
 async function fetchResources(task) {
   const opts = {
     video: task.options.video,
+    pageStart: task.options.pageStart,
+    pageEnd: task.options.pageEnd,
+    intervalPage: task.options.intervalPage,
     dateRange: task.options.dateRange
   };
 
@@ -294,7 +302,6 @@ async function fetchResources(task) {
     debug('Resolved UID', { uid, nickname: task.parsed.nickname });
 
     const result = await fetchUserFeed(uid, opts);
-    // Fallback order: username → nickname → uid_{uid}
     const targetName = result.username || task.parsed.nickname || `uid_${uid}`;
     debug('User feed fetched', { uid, username: result.username, targetName, count: result.resources.length });
 
@@ -311,17 +318,30 @@ async function fetchResources(task) {
   }
 
   if (task.type === 'supertopic') {
-    const { containerid } = task.parsed;
+    let containerid = task.parsed.containerid;
+    let supertopicName = null;
+
+    if (!containerid && task.parsed.keyword) {
+      debug('Searching supertopic by keyword', { keyword: task.parsed.keyword });
+      const searchResult = await searchSupertopic(task.parsed.keyword);
+      if (!searchResult?.containerid) throw new Error(`找不到超話: ${task.parsed.keyword}`);
+      containerid = searchResult.containerid;
+      supertopicName = searchResult.supertopicName;
+      debug('Supertopic found', { containerid, supertopicName });
+    }
+
     if (!containerid) throw new Error('缺少 containerid');
     debug('Fetching supertopic feed', { containerid });
+
     const result = await fetchSupertopicFeed(containerid, opts);
-    const targetName = result.supertopicName || containerid;
-    debug('Supertopic feed fetched', { containerid, supertopicName: result.supertopicName, targetName, count: result.resources.length });
+    const targetName = supertopicName || result.supertopicName || containerid;
+    debug('Supertopic feed fetched', { containerid, supertopicName: targetName, count: result.resources.length });
+
     return {
       resources: result.resources.map((r, i) => ({ ...r, _taskId: task.id, index: r.index || i + 1 })),
       meta: {
         containerid,
-        supertopicName: result.supertopicName,
+        supertopicName: targetName,
         targetName,
         containerUrls: result.containerUrls || []
       }
@@ -343,8 +363,10 @@ async function fetchResources(task) {
 }
 
 function enqueueResources(task, selectedIndexes) {
-  const subfolderType = task.type === 'supertopic' ? 'supertopic' : 'user';
+  const isSupertopic = task.type === 'supertopic';
   const targetName = sanitize(task.meta?.targetName || 'weibo');
+  const targetId = task.meta?.uid || task.meta?.containerid || '';
+  const pathTemplate = isSupertopic ? task.options.pathTemplateSupertopic : task.options.pathTemplateUser;
   const allowed = Array.isArray(selectedIndexes) && selectedIndexes.length
     ? new Set(selectedIndexes.map(Number))
     : null;
@@ -360,9 +382,9 @@ function enqueueResources(task, selectedIndexes) {
     if (allowed && !allowed.has(Number(res.index))) return;
     res._enqueued = true;
     downloadManager.enqueue(res, {
-      template: task.options.nameTemplate,
-      userName: targetName,
-      subfolderType,
+      pathTemplate,
+      nickname: targetName,
+      id: targetId,
       overwrite: task.options.overwrite
     });
   });

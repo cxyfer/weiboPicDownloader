@@ -8,10 +8,15 @@ const taskList = $('task-list');
 const form = $('task-form');
 const settingsForm = $('settings-form');
 const concurrencyInput = $('concurrency-input');
-const basePathInput = $('base-path-input');
-const nameTemplateInput = $('name-template-input');
+const userPathInput = $('user-path-input');
+const supertopicPathInput = $('supertopic-path-input');
 const dateStartInput = $('date-start');
 const dateEndInput = $('date-end');
+const pageStartInput = $('page-start-input');
+const pageEndInput = $('page-end-input');
+const videoCheckbox = $('video-checkbox');
+const intervalPageInput = $('interval-page-input');
+const intervalDownloadInput = $('interval-download-input');
 const autoDownloadCheckbox = $('auto-download-checkbox');
 const settingsStatus = $('settings-status');
 
@@ -36,10 +41,7 @@ form.addEventListener('submit', async e => {
     return;
   }
 
-  const payload = {
-    url,
-    video: $('video-checkbox').checked
-  };
+  const payload = { url };
 
   setStatus('送出中...');
   try {
@@ -53,6 +55,18 @@ form.addEventListener('submit', async e => {
     }
   } catch (err) {
     setStatus(err.message, true);
+  }
+});
+
+$('auto-fill-btn').addEventListener('click', async () => {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.url) {
+      $('url-input').value = tab.url;
+      setStatus('已填入目前網址');
+    }
+  } catch (err) {
+    setStatus('無法取得目前網址', true);
   }
 });
 
@@ -371,15 +385,25 @@ setInterval(refreshTasks, 5000);
 settingsForm.addEventListener('submit', async e => {
   e.preventDefault();
   const settings = {
-    concurrency: parseInt(concurrencyInput.value, 10) || 3,
-    basePath: basePathInput.value.trim() || 'weiboPic',
-    nameTemplate: nameTemplateInput.value.trim() || '{date}_{name}',
+    video: videoCheckbox.checked,
+    pageStart: parseInt(pageStartInput.value, 10) || 1,
+    pageEnd: parseInt(pageEndInput.value, 10) || 0,
+    pathTemplateUser: userPathInput.value.trim() || 'weiboPic/{nickname}/{date:yyyy-MM-dd}_{filename}{ext}',
+    pathTemplateSupertopic: supertopicPathInput.value.trim() || 'weiboPic/SuperTopic/{nickname}/{date:yyyy-MM-dd}_{filename}{ext}',
     dateRange: {
       start: dateStartInput.value || null,
       end: dateEndInput.value || null
     },
-    autoDownload: autoDownloadCheckbox.checked
+    autoDownload: autoDownloadCheckbox.checked,
+    concurrency: parseInt(concurrencyInput.value, 10) || 3,
+    intervalPage: parseFloat(intervalPageInput.value) ?? 1,
+    intervalDownload: parseFloat(intervalDownloadInput.value) ?? 0
   };
+
+  if (settings.pageEnd > 0 && settings.pageEnd < settings.pageStart) {
+    setSettingsStatus('結束頁必須大於或等於起始頁', true);
+    return;
+  }
 
   try {
     const res = await chrome.runtime.sendMessage({
@@ -400,13 +424,19 @@ async function loadSettings() {
   try {
     const res = await chrome.runtime.sendMessage({ type: 'GET_SETTINGS' });
     if (res?.ok && res.data) {
-      concurrencyInput.value = res.data.concurrency || 3;
-      basePathInput.value = res.data.basePath || 'weiboPic';
-      nameTemplateInput.value = res.data.nameTemplate || '{date}_{name}';
-      autoDownloadCheckbox.checked = !!res.data.autoDownload;
-      if (res.data.dateRange) {
-        dateStartInput.value = res.data.dateRange.start || '';
-        dateEndInput.value = res.data.dateRange.end || '';
+      const s = res.data;
+      videoCheckbox.checked = !!s.video;
+      pageStartInput.value = s.pageStart || 1;
+      pageEndInput.value = s.pageEnd || 0;
+      userPathInput.value = s.pathTemplateUser || 'weiboPic/{nickname}/{date:yyyy-MM-dd}_{filename}{ext}';
+      supertopicPathInput.value = s.pathTemplateSupertopic || 'weiboPic/SuperTopic/{nickname}/{date:yyyy-MM-dd}_{filename}{ext}';
+      autoDownloadCheckbox.checked = !!s.autoDownload;
+      concurrencyInput.value = s.concurrency || 3;
+      intervalPageInput.value = s.intervalPage ?? 1;
+      intervalDownloadInput.value = s.intervalDownload ?? 0;
+      if (s.dateRange) {
+        dateStartInput.value = s.dateRange.start || '';
+        dateEndInput.value = s.dateRange.end || '';
       }
     }
   } catch (err) {
