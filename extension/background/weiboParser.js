@@ -60,6 +60,7 @@ export async function fetchUserFeed(uid, options = {}) {
   const containerid = await uidToContainerId(uid);
   const resources = [];
   const containerUrls = [];
+  const seenMids = new Set();
   let username = null;
   let page = Math.max(1, pageStart);
   let emptyCount = 0;
@@ -92,6 +93,10 @@ export async function fetchUserFeed(uid, options = {}) {
       if (Number(card?.card_type) !== 9) continue;
       const mblog = card.mblog;
       if (!mblog) continue;
+
+      const mid = String(mblog.mid || mblog.id || '');
+      if (mid && seenMids.has(mid)) continue;
+      if (mid) seenMids.add(mid);
 
       if (!username && mblog.user?.screen_name && String(mblog.user?.id) === String(uid)) {
         username = mblog.user.screen_name;

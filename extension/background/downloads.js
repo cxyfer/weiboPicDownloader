@@ -9,6 +9,7 @@ export class DownloadManager {
     this.concurrency = concurrency;
     this.intervalDownload = 0;
     this.lastDownloadTime = 0;
+    this.nextSlotTime = 0;
     this.pending = [];
     this.active = new Map();
     this.processing = new Map();
@@ -84,8 +85,9 @@ export class DownloadManager {
     logger.info(`Starting download attempt ${task.attempts} for: ${resource.url}`);
 
     if (this.intervalDownload > 0) {
-      const elapsed = Date.now() - this.lastDownloadTime;
-      const wait = this.intervalDownload * 1000 - elapsed;
+      const targetTime = Math.max(Date.now(), this.nextSlotTime);
+      this.nextSlotTime = targetTime + this.intervalDownload * 1000;
+      const wait = targetTime - Date.now();
       if (wait > 0) {
         logger.info(`Waiting ${wait}ms for download interval`);
         await new Promise(r => setTimeout(r, wait));

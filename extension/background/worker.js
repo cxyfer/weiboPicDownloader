@@ -377,9 +377,9 @@ function enqueueResources(task, selectedIndexes) {
     selected: allowed ? allowed.size : task.resources.length
   });
 
-  task.resources.forEach(res => {
+  task.resources.forEach((res, i) => {
     if (res._state === 'completed' || res._enqueued) return;
-    if (allowed && !allowed.has(Number(res.index))) return;
+    if (allowed && !allowed.has(i)) return;
     res._enqueued = true;
     downloadManager.enqueue(res, {
       pathTemplate,
@@ -397,7 +397,7 @@ async function confirmDownload(taskId, selectedIndexes) {
   debug('Confirm download', { taskId, selectedIndexes });
 
   const selected = Array.isArray(selectedIndexes) && selectedIndexes.length
-    ? selectedIndexes : task.resources.map(r => r.index);
+    ? selectedIndexes : task.resources.map((_, i) => i);
   task.stats.total = selected.length;
 
   await setTaskStatus(task, TASK_STATUS.DOWNLOADING, '下載中');

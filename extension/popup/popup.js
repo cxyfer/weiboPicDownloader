@@ -20,7 +20,7 @@ const intervalDownloadInput = $('interval-download-input');
 const autoDownloadCheckbox = $('auto-download-checkbox');
 const settingsStatus = $('settings-status');
 
-const state = { tasks: [], expanded: {}, debugExpanded: {} };
+const state = { tasks: [], expanded: {}, debugExpanded: {}, unchecked: {} };
 const STATUS_TEXT = {
   pending: '等待中',
   fetching: '讀取中',
@@ -103,6 +103,10 @@ async function refreshTasks() {
     const res = await chrome.runtime.sendMessage({ type: 'LIST_TASKS' });
     const tasks = res?.ok ? res.data : (Array.isArray(res) ? res : []);
     state.tasks = tasks;
+    const validTaskIds = new Set(tasks.map(t => t.id));
+    Object.keys(state.unchecked).forEach(id => {
+      if (!validTaskIds.has(id)) delete state.unchecked[id];
+    });
     renderTasks();
   } catch (err) {
     taskList.innerHTML = `<p class="muted">錯誤：${err.message}</p>`;
@@ -173,7 +177,17 @@ function renderTasks() {
 
       let selected;
       if (checkboxes.length === 0) {
-        selected = [];
+        const task = state.tasks.find(t => t.id === taskId);
+        const resources = task?.resources || [];
+        const uncheckedUrls = state.unchecked[taskId] || new Set();
+        selected = resources
+          .map((res, idx) => ({ idx, url: res.url }))
+          .filter(item => !uncheckedUrls.has(item.url))
+          .map(item => item.idx);
+        if (!selected.length && resources.length > 0) {
+          setStatus('請至少選擇一個資源', true);
+          return;
+        }
       } else {
         selected = getSelectedIndexes(card);
         if (!selected.length) {
@@ -213,6 +227,16 @@ function renderTasks() {
     btn.addEventListener('click', () => {
       const url = btn.dataset.copy;
       copyToClipboard(url);
+    });
+  });
+
+  taskList.querySelectorAll('.url-item input[type="checkbox"]').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const taskId = cb.closest('.task-card').dataset.id;
+      const url = cb.dataset.url;
+      if (!state.unchecked[taskId]) state.unchecked[taskId] = new Set();
+      if (cb.checked) state.unchecked[taskId].delete(url);
+      else state.unchecked[taskId].add(url);
     });
   });
 }
@@ -289,7 +313,7 @@ function renderDebugSection(task, resources) {
 function renderPreview(task) {
   const resources = Array.isArray(task.resources) ? task.resources : [];
   const expanded = !!state.expanded[task.id];
-  const listHtml = resources.map((res, idx) => renderPreviewItem(res, idx)).join('');
+  const listHtml = resources.map((res, idx) => renderPreviewItem(task.id, res, idx)).join('');
   const body = expanded ? (listHtml || '<div class="muted">沒有可預覽的資源</div>') : '';
   const debugSection = expanded ? renderDebugSection(task, resources) : '';
 
@@ -312,19 +336,43 @@ function renderPreview(task) {
   `;
 }
 
-function renderPreviewItem(res, idx) {
-  const index = res.index || idx + 1;
+function formatDateYMD(date) {
+  if (!date) return 'unknown';
+  const d = new Date(date);
+  if (isNaN(d.getTime())) return 'unknown';
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function getFilenameFromUrl(url) {
+  if (!url) return 'file';
+  try {
+    const pathname = new URL(url).pathname;
+    const name = pathname.split('/').pop() || 'file';
+    return name.replace(/\.[^.]+$/, '');
+  } catch {
+    return 'file';
+  }
+}
+
+function renderPreviewItem(taskId, res, idx) {
   const url = res.url || '';
+  const isUnchecked = state.unchecked[taskId]?.has(url);
   const safeUrl = escapeHtml(url || '未知');
   const type = res.type === 'video' ? 'VIDEO' : 'PHOTO';
   const warn = isSuspiciousUrl(url);
+  const dateStr = formatDateYMD(res.date);
+  const filename = getFilenameFromUrl(res.url);
+  const displayName = `${dateStr}_${filename}`;
 
   return `
     <label class="url-item">
-      <input type="checkbox" data-index="${index}" checked>
+      <input type="checkbox" data-index="${idx}" data-url="${escapeHtml(url)}" ${isUnchecked ? '' : 'checked'}>
       <span class="url-badge">${type}</span>
       ${warn ? '<span class="url-warning" title="域名可能不是媒體 CDN">⚠</span>' : ''}
-      <span class="url-text" title="${safeUrl}">${safeUrl}</span>
+      <span class="url-text" title="${safeUrl}">${escapeHtml(displayName)}</span>
     </label>
   `;
 }
@@ -354,6 +402,15 @@ function getSelectedIndexes(card) {
 }
 
 function toggleSelection(card, checked) {
+  const taskId = card.dataset.id;
+  if (checked) {
+    state.unchecked[taskId] = new Set();
+  } else {
+    state.unchecked[taskId] = new Set();
+    card.querySelectorAll('.url-item input[type="checkbox"]').forEach(cb => {
+      state.unchecked[taskId].add(cb.dataset.url);
+    });
+  }
   card.querySelectorAll('.url-item input[type="checkbox"]').forEach(cb => {
     cb.checked = checked;
   });
