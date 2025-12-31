@@ -1,13 +1,22 @@
-import { API_ENDPOINTS } from '../common/constants.js';
+import { API_ENDPOINTS, DEFAULT_HEADERS } from '../common/constants.js';
 import { apiFetch, RateLimitError } from './apiClient.js';
 
 export async function nicknameToUid(nickname) {
   if (!nickname) return null;
   const url = `https://m.weibo.cn/n/${encodeURIComponent(nickname)}`;
-  const resp = await apiFetch(url, { redirect: 'follow' });
-  if (resp.url) {
-    const match = /\/u\/(\d+)/.exec(resp.url);
-    if (match) return match[1];
+  try {
+    const resp = await fetch(url, {
+      method: 'GET',
+      credentials: 'include',
+      redirect: 'follow',
+      headers: DEFAULT_HEADERS
+    });
+    if (resp.ok && resp.url) {
+      const match = /\/u\/(\d+)/.exec(resp.url);
+      if (match) return match[1];
+    }
+  } catch {
+    // Ignore fetch errors
   }
   return null;
 }

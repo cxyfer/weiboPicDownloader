@@ -53,6 +53,9 @@ function parseDesktop(url, segments, raw) {
   if (first === 'u' && segments[1]) {
     return { type: 'user', raw, uid: segments[1], source: 'desktop' };
   }
+  if (first === 'n' && segments[1]) {
+    return { type: 'user', raw, nickname: segments[1], source: 'desktop' };
+  }
   if (first === 'p' && segments[1]) {
     return { type: 'supertopic', raw, containerid: cleanContainerId(segments[1]), source: 'desktop' };
   }
